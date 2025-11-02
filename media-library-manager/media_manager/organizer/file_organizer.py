@@ -812,11 +812,19 @@ class FileOrganizer:
                 
                 try:
                     if current_dir.is_dir():
-                        contents = list(current_dir.iterdir())
+                        # More thorough check for empty directory
+                        # On Linux, hidden files (.files) might not be caught
+                        try:
+                            contents = list(current_dir.iterdir())
+                        except (OSError, PermissionError) as e:
+                            self.logger.debug(f"Error listing directory {current_dir}: {e}")
+                            break
                         
                         # Check if directory is empty
+                        # On Linux, iterdir() might not show all files, so we verify by trying rmdir
                         if not contents:
-                            # Directory is completely empty, remove it
+                            # Directory appears empty, try to remove it
+                            # rmdir() will fail if directory is not actually empty (e.g., has hidden files)
                             try:
                                 current_dir.rmdir()
                                 self.logger.info(f"Removed empty directory: {current_dir}")
@@ -830,22 +838,70 @@ class FileOrganizer:
                                 else:
                                     break
                             except OSError as e:
-                                self.logger.debug(f"Could not remove directory {current_dir}: {e}")
+                                # On Linux, errno 39 (ENOTEMPTY) means directory is not empty
+                                # errno 16 (EBUSY) means directory is in use
+                                # errno 13 (EACCES) means permission denied
+                                if hasattr(e, 'errno'):
+                                    if e.errno == 39:  # ENOTEMPTY
+                                        # Directory has hidden files or other entries
+                                        self.logger.debug(f"Directory {current_dir} is not empty (may have hidden files)")
+                                        # Try to list all files including hidden
+                                        try:
+                                            all_contents = os.listdir(str(current_dir))
+                                            if all_contents:
+                                                self.logger.debug(f"Directory {current_dir} contains: {all_contents}")
+                                            else:
+                                                # Empty but rmdir failed - might be a mount point or special case
+                                                self.logger.debug(f"Directory {current_dir} appears empty but cannot be removed")
+                                        except:
+                                            pass
+                                    elif e.errno == 16:  # EBUSY
+                                        self.logger.debug(f"Directory {current_dir} is busy (in use)")
+                                    elif e.errno == 13:  # EACCES
+                                        self.logger.debug(f"Permission denied removing directory {current_dir}")
+                                else:
+                                    self.logger.debug(f"Could not remove directory {current_dir}: {e}")
                                 break
                         else:
                             # Check if only empty subdirectories remain
-                            has_files = any(item.is_file() for item in contents)
+                            # On Linux, check for all types of entries including hidden files
+                            has_files = False
+                            has_dirs = False
+                            
+                            for item in contents:
+                                try:
+                                    if item.is_file():
+                                        has_files = True
+                                        break
+                                    elif item.is_dir():
+                                        has_dirs = True
+                                except (OSError, PermissionError):
+                                    # Skip items we can't access
+                                    continue
+                            
                             if not has_files:
                                 # Try to remove empty subdirectories first (recursively)
                                 for item in contents:
-                                    if item.is_dir() and not should_exclude(item):
-                                        # Recursively clean up subdirectory
-                                        sub_removed = self._cleanup_empty_directories_recursive(item, removed_dirs, exclude_set)
-                                        removed_count += sub_removed
+                                    try:
+                                        if item.is_dir() and not should_exclude(item):
+                                            # Recursively clean up subdirectory
+                                            sub_removed = self._cleanup_empty_directories_recursive(item, removed_dirs, exclude_set)
+                                            removed_count += sub_removed
+                                    except (OSError, PermissionError) as e:
+                                        self.logger.debug(f"Error processing subdirectory {item}: {e}")
                                 
                                 # Check again if directory is now empty
+                                # Use os.listdir to catch hidden files on Linux
                                 try:
-                                    if not list(current_dir.iterdir()):
+                                    try:
+                                        # Use os.listdir first for complete listing (catches hidden files on Linux)
+                                        remaining_list = os.listdir(str(current_dir))
+                                        remaining = [current_dir / item for item in remaining_list]
+                                    except (OSError, PermissionError):
+                                        # Fall back to iterdir if os.listdir fails
+                                        remaining = list(current_dir.iterdir())
+                                    
+                                    if not remaining:
                                         current_dir.rmdir()
                                         self.logger.info(f"Removed empty directory: {current_dir}")
                                         removed_dirs.add(current_dir)
@@ -857,7 +913,13 @@ class FileOrganizer:
                                             continue
                                         else:
                                             break
-                                except OSError:
+                                    else:
+                                        # Directory still has contents, stop cleaning this path
+                                        self.logger.debug(f"Directory {current_dir} still has {len(remaining)} items: {[r.name for r in remaining]}")
+                                        break
+                                except OSError as e:
+                                    errno = getattr(e, 'errno', None)
+                                    self.logger.debug(f"Could not remove directory {current_dir} after cleanup: {e} (errno: {errno})")
                                     break
                             else:
                                 # Directory has files, stop cleaning
@@ -897,23 +959,42 @@ class FileOrganizer:
                 except ValueError:
                     continue
             
-            contents = list(directory.iterdir())
+            try:
+                contents = list(directory.iterdir())
+            except (OSError, PermissionError) as e:
+                self.logger.debug(f"Error listing directory {directory}: {e}")
+                return removed_count
             
             # First, recursively clean up subdirectories
             for item in contents:
-                if item.is_dir() and item not in removed_dirs:
-                    sub_removed = self._cleanup_empty_directories_recursive(item, removed_dirs, exclude_set)
-                    removed_count += sub_removed
+                try:
+                    if item.is_dir() and item not in removed_dirs:
+                        sub_removed = self._cleanup_empty_directories_recursive(item, removed_dirs, exclude_set)
+                        removed_count += sub_removed
+                except (OSError, PermissionError) as e:
+                    self.logger.debug(f"Error processing subdirectory {item}: {e}")
             
             # Check if directory is now empty
+            # Use os.listdir to catch hidden files on Linux
             try:
-                if not list(directory.iterdir()):
+                try:
+                    # Use os.listdir for complete listing (catches hidden files)
+                    remaining_list = os.listdir(str(directory))
+                    remaining = [directory / item for item in remaining_list]
+                except (OSError, PermissionError):
+                    # Fall back to iterdir
+                    remaining = list(directory.iterdir())
+                
+                if not remaining:
                     directory.rmdir()
                     self.logger.debug(f"Removed empty subdirectory: {directory}")
                     removed_dirs.add(directory)
                     removed_count += 1
-            except OSError:
-                pass
+                else:
+                    self.logger.debug(f"Directory {directory} still has {len(remaining)} items after cleanup: {[r.name for r in remaining]}")
+            except OSError as e:
+                errno = getattr(e, 'errno', None)
+                self.logger.debug(f"Could not remove directory {directory}: {e} (errno: {errno}, may not be empty or in use)")
         except (OSError, PermissionError) as e:
             self.logger.debug(f"Error cleaning subdirectory {directory}: {e}")
         
@@ -963,33 +1044,78 @@ class FileOrganizer:
                 # Check if directory is empty
                 try:
                     contents = list(root_path.iterdir())
-                    if not contents:
-                        # Directory is empty, remove it
+                    
+                    # More thorough check - verify directory is truly empty
+                    # On Linux, use os.listdir to catch hidden files that iterdir() might miss
+                    try:
+                        all_contents = os.listdir(str(root_path))
+                        is_empty = len(all_contents) == 0
+                    except (OSError, PermissionError):
+                        # If we can't list, check with iterdir
+                        is_empty = len(contents) == 0
+                        all_contents = contents
+                    
+                    if is_empty:
+                        # Directory appears empty, try to remove it
                         try:
                             root_path.rmdir()
                             self.logger.info(f"Removed empty directory: {root_path}")
                             removed_count += 1
                         except OSError as e:
-                            self.logger.debug(f"Could not remove empty directory {root_path}: {e}")
+                            # On Linux, this could fail if directory is in use or has hidden files
+                            errno = getattr(e, 'errno', None)
+                            if errno == 39:  # ENOTEMPTY - directory not empty
+                                self.logger.debug(f"Directory {root_path} is not empty (ENOTEMPTY)")
+                            elif errno == 16:  # EBUSY - directory in use
+                                self.logger.debug(f"Directory {root_path} is busy (EBUSY)")
+                            elif errno == 13:  # EACCES - permission denied
+                                self.logger.debug(f"Permission denied removing {root_path} (EACCES)")
+                            else:
+                                self.logger.debug(f"Could not remove directory {root_path}: {e} (errno: {errno})")
                     else:
-                        # Check if only empty subdirectories remain
-                        has_files = any(item.is_file() for item in contents)
+                        # Check if only empty subdirectories remain (no files)
+                        has_files = False
+                        for item in contents:
+                            try:
+                                if item.is_file():
+                                    has_files = True
+                                    break
+                            except (OSError, PermissionError):
+                                # If we can't check, assume it might be a file
+                                has_files = True
+                                break
+                        
                         if not has_files:
                             # Try to remove empty subdirectories recursively
                             removed_dirs = set()
                             for item in contents:
-                                if item.is_dir() and not should_exclude(item):
-                                    sub_removed = self._cleanup_empty_directories_recursive(item, removed_dirs, exclude_set)
-                                    removed_count += sub_removed
+                                try:
+                                    if item.is_dir() and not should_exclude(item):
+                                        sub_removed = self._cleanup_empty_directories_recursive(item, removed_dirs, exclude_set)
+                                        removed_count += sub_removed
+                                except (OSError, PermissionError) as e:
+                                    self.logger.debug(f"Error cleaning subdirectory {item}: {e}")
                             
                             # Check again if directory is now empty
+                            # Use os.listdir to catch hidden files on Linux
                             try:
-                                if not list(root_path.iterdir()):
+                                try:
+                                    # Use os.listdir for complete listing
+                                    remaining_list = os.listdir(str(root_path))
+                                    remaining = [root_path / item for item in remaining_list]
+                                except (OSError, PermissionError):
+                                    # Fall back to iterdir
+                                    remaining = list(root_path.iterdir())
+                                
+                                if not remaining:
                                     root_path.rmdir()
                                     self.logger.info(f"Removed empty directory: {root_path}")
                                     removed_count += 1
-                            except OSError:
-                                pass
+                                else:
+                                    self.logger.debug(f"Directory {root_path} still has {len(remaining)} items: {[r.name for r in remaining]}")
+                            except OSError as e:
+                                errno = getattr(e, 'errno', None)
+                                self.logger.debug(f"Could not remove directory {root_path} after subdirectory cleanup: {e} (errno: {errno})")
                 except (OSError, PermissionError) as e:
                     self.logger.debug(f"Error checking directory {root_path}: {e}")
         except Exception as e:
