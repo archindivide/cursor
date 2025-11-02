@@ -764,7 +764,8 @@ class FileOrganizer:
         except Exception as e:
             self.logger.error(f"Error saving original structure mapping: {e}")
     
-    def _cleanup_empty_directories(self, directories: List[Path], recursive: bool = True) -> int:
+    def _cleanup_empty_directories(self, directories: List[Path], recursive: bool = True, 
+                                    exclude_paths: Optional[List[Path]] = None) -> int:
         """
         Clean up empty directories after files have been moved.
         Recursively cleans up parent directories if they become empty.
@@ -772,21 +773,41 @@ class FileOrganizer:
         Args:
             directories: List of directory paths to check and clean up
             recursive: If True, also clean up parent directories that become empty
+            exclude_paths: Optional list of paths to exclude from cleanup
         
         Returns:
             Number of directories removed
         """
         removed_count = 0
         removed_dirs = set()
+        exclude_set = set(exclude_paths or [])
         
         # Sort directories by depth (deepest first) to avoid deleting parent before child
         directories_sorted = sorted(directories, key=lambda p: len(p.parts), reverse=True)
         
+        # Helper function to check if directory should be excluded
+        def should_exclude(path: Path) -> bool:
+            """Check if path should be excluded from cleanup."""
+            if path in exclude_set:
+                return True
+            # Check if any exclude path is a parent of this path
+            for exclude_path in exclude_set:
+                try:
+                    path.relative_to(exclude_path)
+                    return True
+                except ValueError:
+                    continue
+            return False
+        
+        # Process each directory
         for directory in directories_sorted:
+            if should_exclude(directory):
+                continue
+                
             # Recursively clean up this directory and its parents
             current_dir = directory
             while current_dir and current_dir.exists():
-                if current_dir in removed_dirs:
+                if current_dir in removed_dirs or should_exclude(current_dir):
                     break
                 
                 try:
@@ -815,16 +836,12 @@ class FileOrganizer:
                             # Check if only empty subdirectories remain
                             has_files = any(item.is_file() for item in contents)
                             if not has_files:
-                                # Try to remove empty subdirectories first
+                                # Try to remove empty subdirectories first (recursively)
                                 for item in contents:
-                                    if item.is_dir():
-                                        try:
-                                            sub_contents = list(item.iterdir())
-                                            if not sub_contents:
-                                                item.rmdir()
-                                                self.logger.debug(f"Removed empty subdirectory: {item}")
-                                        except OSError:
-                                            pass
+                                    if item.is_dir() and not should_exclude(item):
+                                        # Recursively clean up subdirectory
+                                        sub_removed = self._cleanup_empty_directories_recursive(item, removed_dirs, exclude_set)
+                                        removed_count += sub_removed
                                 
                                 # Check again if directory is now empty
                                 try:
@@ -850,6 +867,133 @@ class FileOrganizer:
                 except (OSError, PermissionError) as e:
                     self.logger.debug(f"Error checking directory {current_dir}: {e}")
                     break
+        
+        return removed_count
+    
+    def _cleanup_empty_directories_recursive(self, directory: Path, removed_dirs: set, 
+                                             exclude_set: set) -> int:
+        """
+        Helper method to recursively clean up empty subdirectories.
+        
+        Args:
+            directory: Directory to clean up
+            removed_dirs: Set of already removed directories (updated in place)
+            exclude_set: Set of paths to exclude
+        
+        Returns:
+            Number of directories removed
+        """
+        removed_count = 0
+        
+        try:
+            if directory in removed_dirs:
+                return removed_count
+            
+            # Check if should exclude
+            for exclude_path in exclude_set:
+                try:
+                    directory.relative_to(exclude_path)
+                    return removed_count
+                except ValueError:
+                    continue
+            
+            contents = list(directory.iterdir())
+            
+            # First, recursively clean up subdirectories
+            for item in contents:
+                if item.is_dir() and item not in removed_dirs:
+                    sub_removed = self._cleanup_empty_directories_recursive(item, removed_dirs, exclude_set)
+                    removed_count += sub_removed
+            
+            # Check if directory is now empty
+            try:
+                if not list(directory.iterdir()):
+                    directory.rmdir()
+                    self.logger.debug(f"Removed empty subdirectory: {directory}")
+                    removed_dirs.add(directory)
+                    removed_count += 1
+            except OSError:
+                pass
+        except (OSError, PermissionError) as e:
+            self.logger.debug(f"Error cleaning subdirectory {directory}: {e}")
+        
+        return removed_count
+    
+    def _cleanup_empty_directories_in_directory(self, directory: Path, 
+                                                exclude_paths: Optional[List[Path]] = None) -> int:
+        """
+        Comprehensively scan a directory and remove all empty directories.
+        Useful when input and output are the same.
+        
+        Args:
+            directory: Root directory to scan
+            exclude_paths: Optional list of paths to exclude from cleanup
+        
+        Returns:
+            Number of directories removed
+        """
+        removed_count = 0
+        exclude_set = set(exclude_paths or [])
+        
+        # Helper to check if path should be excluded
+        def should_exclude(path: Path) -> bool:
+            if path in exclude_set:
+                return True
+            for exclude_path in exclude_set:
+                try:
+                    path.relative_to(exclude_path)
+                    return True
+                except ValueError:
+                    continue
+            return False
+        
+        # Walk directory tree bottom-up (deepest first)
+        try:
+            for root, dirs, files in os.walk(directory, topdown=False):
+                root_path = Path(root)
+                
+                # Skip excluded paths
+                if should_exclude(root_path):
+                    continue
+                
+                # Skip if root path is the same as directory (don't remove root)
+                if root_path == directory:
+                    continue
+                
+                # Check if directory is empty
+                try:
+                    contents = list(root_path.iterdir())
+                    if not contents:
+                        # Directory is empty, remove it
+                        try:
+                            root_path.rmdir()
+                            self.logger.info(f"Removed empty directory: {root_path}")
+                            removed_count += 1
+                        except OSError as e:
+                            self.logger.debug(f"Could not remove empty directory {root_path}: {e}")
+                    else:
+                        # Check if only empty subdirectories remain
+                        has_files = any(item.is_file() for item in contents)
+                        if not has_files:
+                            # Try to remove empty subdirectories recursively
+                            removed_dirs = set()
+                            for item in contents:
+                                if item.is_dir() and not should_exclude(item):
+                                    sub_removed = self._cleanup_empty_directories_recursive(item, removed_dirs, exclude_set)
+                                    removed_count += sub_removed
+                            
+                            # Check again if directory is now empty
+                            try:
+                                if not list(root_path.iterdir()):
+                                    root_path.rmdir()
+                                    self.logger.info(f"Removed empty directory: {root_path}")
+                                    removed_count += 1
+                            except OSError:
+                                pass
+                except (OSError, PermissionError) as e:
+                    self.logger.debug(f"Error checking directory {root_path}: {e}")
+        except Exception as e:
+            self.logger.error(f"Error scanning directory for empty folders: {e}")
         
         return removed_count
     

@@ -389,6 +389,17 @@ def organize(ctx, directory, dry_run, output_dir, movies_dir, tv_shows_dir, musi
         
         # Track all source directories for cleanup
         source_directories = set()
+        # Track all target directories to exclude from cleanup
+        target_base_dirs = set()
+        output_dirs = config.get('organization.output_directories', {})
+        default_output = Path(config.get('organization.output_directory', 'organized_media'))
+        target_base_dirs.add(default_output)
+        for category, cat_dir in output_dirs.items():
+            if cat_dir and cat_dir.strip():
+                target_base_dirs.add(Path(cat_dir))
+        
+        # Get the input directory to compare with output
+        input_directory = Path(directory)
         
         for file_path in files:
             move_plan = organizer.plan_file_move(file_path, None)
@@ -397,8 +408,22 @@ def organize(ctx, directory, dry_run, output_dir, movies_dir, tv_shows_dir, musi
                     success_count += 1
                     # Track source directory for cleanup
                     source_dir = move_plan['from'].parent
-                    if source_dir.exists() and source_dir != move_plan['to'].parent:
+                    target_dir = move_plan['to'].parent
+                    
+                    # Only track source directory if it's different from target
+                    # and if we're organizing within the same directory structure
+                    if source_dir.exists() and source_dir != target_dir:
                         source_directories.add(source_dir)
+                        # Also add all parent directories up to the input directory
+                        # or output directory to ensure full cleanup
+                        current = source_dir
+                        while current != input_directory and current not in target_base_dirs:
+                            if current.exists():
+                                source_directories.add(current)
+                            parent = current.parent
+                            if parent == current:  # Reached root
+                                break
+                            current = parent
                 move_progress.update(1)
         
         move_progress.close()
@@ -406,9 +431,27 @@ def organize(ctx, directory, dry_run, output_dir, movies_dir, tv_shows_dir, musi
         # Clean up empty directories (only if we actually moved files)
         if source_directories:
             click.echo("\nCleaning up empty directories...")
-            removed_count = organizer._cleanup_empty_directories(list(source_directories), recursive=True)
+            # Exclude output directories and input directory from cleanup
+            exclude_paths = list(target_base_dirs)
+            exclude_paths.append(input_directory)
+            removed_count = organizer._cleanup_empty_directories(
+                list(source_directories), 
+                recursive=True, 
+                exclude_paths=exclude_paths
+            )
             if removed_count > 0:
                 click.echo(f"Removed {removed_count} empty directory(ies)")
+            
+            # Also do a comprehensive scan of the input directory to find any remaining empty folders
+            # This helps when input == output
+            if input_directory.exists():
+                click.echo("Scanning for remaining empty directories...")
+                additional_removed = organizer._cleanup_empty_directories_in_directory(
+                    input_directory, 
+                    exclude_paths=exclude_paths
+                )
+                if additional_removed > 0:
+                    click.echo(f"Removed {additional_removed} additional empty directory(ies)")
         
         # Clean up output directory structure again after moves
         # This ensures any new junk files created during organization are cleaned up
