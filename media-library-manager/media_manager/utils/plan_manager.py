@@ -50,14 +50,23 @@ class PlanManager:
             
             # Save organized duplicates (with keep/remove decisions)
             for file_hash, info in organized.items():
+                # Handle case where keep might be None (shouldn't happen, but be safe)
+                keep_path = str(info['keep']) if info['keep'] else ''
                 plan_data['organized'][file_hash] = {
-                    'keep': str(info['keep']),
+                    'keep': keep_path,
                     'remove': [str(p) for p in info['remove']],
                     'count': info['count']
                 }
             
-            # Ensure output directory exists
-            output_file.parent.mkdir(parents=True, exist_ok=True)
+            # Ensure output directory exists (only if there's a parent directory)
+            parent = output_file.parent
+            # Only create directory if parent has parts (not current directory)
+            if parent and parent.parts:
+                try:
+                    parent.mkdir(parents=True, exist_ok=True)
+                except OSError:
+                    # Directory already exists or creation failed, continue anyway
+                    pass
             
             # Write JSON file
             with open(output_file, 'w', encoding='utf-8') as f:
@@ -96,8 +105,9 @@ class PlanManager:
             # Convert string paths back to Path objects
             organized = {}
             for file_hash, info in plan_data.get('organized', {}).items():
+                keep_path = Path(info['keep']) if info.get('keep') and info['keep'].strip() else None
                 organized[file_hash] = {
-                    'keep': Path(info['keep']),
+                    'keep': keep_path,
                     'remove': [Path(p) for p in info['remove']],
                     'count': info['count']
                 }
@@ -158,8 +168,15 @@ class PlanManager:
                 }
                 plan_data['plans'].append(plan_entry)
             
-            # Ensure output directory exists
-            output_file.parent.mkdir(parents=True, exist_ok=True)
+            # Ensure output directory exists (only if there's a parent directory)
+            parent = output_file.parent
+            # Only create directory if parent has parts (not current directory)
+            if parent and parent.parts:
+                try:
+                    parent.mkdir(parents=True, exist_ok=True)
+                except OSError:
+                    # Directory already exists or creation failed, continue anyway
+                    pass
             
             # Write JSON file
             with open(output_file, 'w', encoding='utf-8') as f:

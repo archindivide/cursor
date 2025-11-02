@@ -49,8 +49,12 @@ class MediaScanner:
             # First, collect all files for progress tracking
             all_files = list(directory_path.rglob('*'))
             
+            # Set total if progress bar exists but doesn't have one
+            if progress_bar is not None and getattr(progress_bar, 'total', None) is None:
+                progress_bar.total = len(all_files)
+            
             for file_path in all_files:
-                if progress_bar:
+                if progress_bar is not None:
                     progress_bar.set_description(f"Scanning: {file_path.name[:40]}")
                     progress_bar.update(1)
                 
@@ -65,12 +69,12 @@ class MediaScanner:
                 if is_media_file(file_path, self.extensions):
                     media_files.append(file_path)
             
-            if progress_bar:
+            if progress_bar is not None:
                 progress_bar.close()
         
         except (OSError, PermissionError) as e:
             self.logger.error(f"Error scanning {directory}: {e}")
-            if progress_bar:
+            if progress_bar is not None:
                 progress_bar.close()
         
         self.logger.info(f"Found {len(media_files)} media files in {directory}")
