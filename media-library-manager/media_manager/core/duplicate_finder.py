@@ -119,7 +119,7 @@ class DuplicateFinder:
     
     def format_duplicate_report(self, duplicates: Dict[str, List[Path]]) -> str:
         """
-        Format duplicate information for display.
+        Format duplicate information for display (concise format).
         
         Args:
             duplicates: Dictionary of duplicate groups
@@ -132,25 +132,22 @@ class DuplicateFinder:
         
         organized = self.organize_duplicates(duplicates)
         total_space = self.calculate_space_savings(organized)
+        total_to_remove = sum(len(info['remove']) for info in organized.values())
         
         for i, (file_hash, info) in enumerate(organized.items(), 1):
-            report.append(f"\nGroup {i}:")
-            report.append(f"  Hash: {file_hash[:16]}...")
-            report.append(f"  Files: {info['count']}")
-            
-            report.append(f"  Keep: {info['keep']}")
-            report.append(f"  Remove:")
-            
-            for file_path in info['remove']:
-                size = get_file_size(file_path)
-                report.append(f"    - {file_path} ({format_file_size(size)})")
-            
             group_space = sum(get_file_size(f) for f in info['remove'])
-            report.append(f"  Space to save: {format_file_size(group_space)}")
+            
+            # Concise format: show keep file and count of duplicates
+            report.append(f"Group {i}: {info['keep'].name} ({info['count']} copies, {format_file_size(group_space)} to save)")
+            
+            # Only show remove list if there are few files
+            if len(info['remove']) <= 3:
+                for file_path in info['remove']:
+                    report.append(f"  - {file_path.name}")
         
         report.append(f"\n{'='*60}")
-        report.append(f"Total files to remove: {sum(len(info['remove']) for info in organized.values())}")
-        report.append(f"Total space to save: {format_file_size(total_space)}")
+        report.append(f"Total: {total_to_remove} duplicate files to remove")
+        report.append(f"Space savings: {format_file_size(total_space)}")
         report.append(f"{'='*60}\n")
         
         return '\n'.join(report)

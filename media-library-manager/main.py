@@ -317,39 +317,43 @@ def organize(ctx, directory, dry_run, output_dir, movies_dir, tv_shows_dir, musi
     
     plan_progress.close()
     
-    # Display organized by media type
+    # Display organized by media type (concise format)
     for media_type, plans in media_groups.items():
-        click.echo(f"\n{media_type.upper()}:")
-        click.echo("-" * 40)
+        click.echo(f"\n{media_type.upper()}: {len(plans)} file(s)")
         
-        for plan in plans:
-            click.echo(f"\n{plan['from'].name}")
-            click.echo(f"  -> {plan['to']}")
-            
-            # Show associated files
-            if plan['associated']:
-                click.echo("  Associated files:")
-                for assoc in plan['associated']:
-                    click.echo(f"    {assoc['from'].name} -> {assoc['to']}")
+        # Only show details if there are few files or in verbose mode
+        show_details = len(plans) <= 10
+        
+        if show_details:
+            for plan in plans:
+                click.echo(f"  {plan['from'].name} -> {plan['to'].name}")
+                
+                # Show associated files briefly
+                if plan['associated']:
+                    assoc_names = [assoc['from'].name for assoc in plan['associated']]
+                    click.echo(f"    (+ {len(plan['associated'])} associated: {', '.join(assoc_names[:3])}{'...' if len(assoc_names) > 3 else ''})")
     
     if not changed_count:
         click.echo("\nNo files need to be organized!")
         return
     
+    # Summary
     click.echo(f"\n{'='*60}")
-    click.echo(f"Total files: {total_count}")
-    click.echo(f"Files to organize: {changed_count}")
+    click.echo(f"Summary: {changed_count} of {total_count} files to organize")
     
-    # Show output directories summary
+    # Show output directories summary (only if different from default or if custom dirs set)
     output_dirs = config.get('organization.output_directories', {})
     default_output = Path(config.get('organization.output_directory', 'organized_media'))
-    click.echo("Output directories (see above for details):")
-    for category in ['movies', 'tv_shows', 'music', 'photos', 'unsorted']:
-        cat_dir = output_dirs.get(category, '')
-        if cat_dir and cat_dir.strip():
-            click.echo(f"  {category}: {Path(cat_dir).absolute()}")
-        else:
-            click.echo(f"  {category}: {default_output.absolute() / category}")
+    has_custom_dirs = any(cat_dir and cat_dir.strip() for cat_dir in output_dirs.values())
+    
+    if has_custom_dirs or output_dir:
+        click.echo("\nOutput directories:")
+        for category in ['movies', 'tv_shows', 'music', 'photos', 'unsorted']:
+            cat_dir = output_dirs.get(category, '')
+            if cat_dir and cat_dir.strip():
+                click.echo(f"  {category}: {Path(cat_dir).absolute()}")
+            else:
+                click.echo(f"  {category}: {default_output.absolute() / category}")
     click.echo(f"{'='*60}")
     
     if not dry_run:
@@ -371,15 +375,20 @@ def organize(ctx, directory, dry_run, output_dir, movies_dir, tv_shows_dir, musi
         move_progress.close()
         
         click.echo(f"\nSuccessfully organized {success_count} files!")
+        
+        # Show output directories if custom paths were used
         output_dirs = config.get('organization.output_directories', {})
-        default_output = Path(config.get('organization.output_directory', 'organized_media'))
-        click.echo("Files organized into:")
-        for category in ['movies', 'tv_shows', 'music', 'photos', 'unsorted']:
-            cat_dir = output_dirs.get(category, '')
-            if cat_dir and cat_dir.strip():
-                click.echo(f"  {category}: {Path(cat_dir).absolute()}")
-            else:
-                click.echo(f"  {category}: {default_output.absolute() / category}")
+        has_custom_dirs = any(cat_dir and cat_dir.strip() for cat_dir in output_dirs.values())
+        
+        if has_custom_dirs or output_dir:
+            default_output = Path(config.get('organization.output_directory', 'organized_media'))
+            click.echo("Organized into:")
+            for category in ['movies', 'tv_shows', 'music', 'photos', 'unsorted']:
+                cat_dir = output_dirs.get(category, '')
+                if cat_dir and cat_dir.strip():
+                    click.echo(f"  {category}: {Path(cat_dir).absolute()}")
+                else:
+                    click.echo(f"  {category}: {default_output.absolute() / category}")
     else:
         click.echo("\nRun without --dry-run to apply changes")
 

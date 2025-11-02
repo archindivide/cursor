@@ -540,7 +540,7 @@ class FileOrganizer:
     def _save_original_structure(self, target_dir: Path, file_mappings: List[Dict[str, Path]]) -> None:
         """
         Save original file structure mapping to a text file for unsorted files.
-        Preserves the full original directory structure.
+        Preserves the full original directory structure in a concise format.
         
         Args:
             target_dir: Target directory where files are being moved
@@ -559,8 +559,6 @@ class FileOrganizer:
                     f.write(f"Original File Structure Mapping\n")
                     f.write(f"Generated: {datetime.now().isoformat()}\n")
                     f.write(f"{'='*80}\n\n")
-                    f.write("This file records the original location of unsorted files.\n")
-                    f.write("Format: Original path -> New location\n\n")
                 
                 # Group by original directory structure
                 from collections import defaultdict
@@ -572,18 +570,14 @@ class FileOrganizer:
                     original_dir = original_path.parent
                     by_directory[original_dir].append((original_path, new_path))
                 
-                # Write grouped by directory structure
+                # Write grouped by directory structure (concise format)
                 for original_dir in sorted(by_directory.keys()):
-                    f.write(f"\nOriginal Directory: {original_dir}\n")
-                    f.write(f"{'-'*80}\n")
+                    f.write(f"\n{original_dir}\n")
                     
                     for original_path, new_path in sorted(by_directory[original_dir]):
-                        # Show relative path from original directory
-                        relative_path = original_path.relative_to(original_dir)
-                        f.write(f"  {relative_path}\n")
-                        f.write(f"    -> {new_path}\n")
-                    
-                    f.write(f"{'-'*80}\n")
+                        # Show just the filename with new location
+                        filename = original_path.name
+                        f.write(f"  {filename} -> {new_path.name}\n")
                 
                 f.write("\n")
             
