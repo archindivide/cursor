@@ -77,6 +77,27 @@ class Config:
         except (KeyError, TypeError):
             return default
     
+    def set(self, key: str, value: Any) -> None:
+        """
+        Set configuration value by key (supports dot notation).
+        This modifies the in-memory config but does not save to file.
+        
+        Args:
+            key: Configuration key (e.g., 'organization.output_directory')
+            value: Value to set
+        """
+        keys = key.split('.')
+        config = self.config
+        
+        # Navigate to the parent dictionary
+        for k in keys[:-1]:
+            if k not in config:
+                config[k] = {}
+            config = config[k]
+        
+        # Set the final value
+        config[keys[-1]] = value
+    
     def get_media_paths(self) -> Dict[str, list]:
         """Get all media library paths."""
         return {

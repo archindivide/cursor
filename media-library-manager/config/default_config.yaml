@@ -44,7 +44,14 @@ organization:
   naming_pattern: "{title}.{year}.{extension}"  # Dot-separated format
   create_subdirectories: true
   organize_by: "type"  # type, genre, year, alphabet, none
-  output_directory: "organized_media"  # Where to create the new structure
+  # Output directories - can specify per-category or use single output_directory
+  output_directory: "organized_media"  # Default output directory (used if category-specific not set)
+  output_directories:
+    movies: ""  # Leave empty to use output_directory/movies
+    tv_shows: ""  # Leave empty to use output_directory/tv_shows
+    music: ""  # Leave empty to use output_directory/music
+    photos: ""  # Leave empty to use output_directory/photos
+    unsorted: ""  # Leave empty to use output_directory/unsorted
   preserve_subtitles: true
   preserve_torrents: true
   # Files not matching movie/TV patterns go to unsorted/ folder

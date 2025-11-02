@@ -233,9 +233,14 @@ def remove_duplicates(ctx, directory, plan_file, dry_run):
 @cli.command()
 @click.argument('directory', type=click.Path(exists=True))
 @click.option('--dry-run', is_flag=True, help='Preview changes without making them')
-@click.option('--output-dir', type=click.Path(), help='Output directory for organized files')
+@click.option('--output-dir', type=click.Path(), help='Base output directory for organized files (overrides config)')
+@click.option('--movies-dir', type=click.Path(), help='Output directory for movies')
+@click.option('--tv-shows-dir', type=click.Path(), help='Output directory for TV shows')
+@click.option('--music-dir', type=click.Path(), help='Output directory for music')
+@click.option('--photos-dir', type=click.Path(), help='Output directory for photos')
+@click.option('--unsorted-dir', type=click.Path(), help='Output directory for unsorted files')
 @click.pass_context
-def organize(ctx, directory, dry_run, output_dir):
+def organize(ctx, directory, dry_run, output_dir, movies_dir, tv_shows_dir, music_dir, photos_dir, unsorted_dir):
     """Organize and standardize file names and structure."""
     logger = ctx.obj['logger']
     config = ctx.obj['config']
@@ -253,15 +258,40 @@ def organize(ctx, directory, dry_run, output_dir):
     # Create organizer
     organizer = FileOrganizer(config, logger)
     
-    # Set output directory
-    if output_dir:
-        output_path = Path(output_dir)
-    else:
-        output_path = Path(config.get('organization.output_directory', 'organized_media'))
+    # Handle per-category output directories from CLI
+    if movies_dir or tv_shows_dir or music_dir or photos_dir or unsorted_dir:
+        # Update config temporarily for this run
+        output_dirs = config.get('organization.output_directories', {}).copy()
+        if movies_dir:
+            output_dirs['movies'] = movies_dir
+        if tv_shows_dir:
+            output_dirs['tv_shows'] = tv_shows_dir
+        if music_dir:
+            output_dirs['music'] = music_dir
+        if photos_dir:
+            output_dirs['photos'] = photos_dir
+        if unsorted_dir:
+            output_dirs['unsorted'] = unsorted_dir
+        config.set('organization.output_directories', output_dirs)
     
+    # Set base output directory (if specified, overrides config)
+    if output_dir:
+        config.set('organization.output_directory', output_dir)
+    
+    # Display output directories
     if dry_run:
         click.echo("\n=== DRY RUN MODE - No files will be modified ===\n")
-        click.echo(f"Files will be organized into: {output_path.absolute()}")
+        
+        output_dirs = config.get('organization.output_directories', {})
+        default_output = Path(config.get('organization.output_directory', 'organized_media'))
+        
+        click.echo("Output directories:")
+        for category in ['movies', 'tv_shows', 'music', 'photos', 'unsorted']:
+            cat_dir = output_dirs.get(category, '')
+            if cat_dir and cat_dir.strip():
+                click.echo(f"  {category}: {Path(cat_dir).absolute()}")
+            else:
+                click.echo(f"  {category}: {default_output.absolute() / category}")
     
     # Plan and show changes with progress bar
     changed_count = 0
@@ -273,7 +303,7 @@ def organize(ctx, directory, dry_run, output_dir):
     plan_progress = tqdm(total=total_count, desc="Planning moves", unit="file", ncols=100)
     
     for file_path in files:
-        move_plan = organizer.plan_file_move(file_path, output_path)
+        move_plan = organizer.plan_file_move(file_path, None)
         plan_progress.update(1)
         
         if move_plan['changed']:
@@ -309,7 +339,17 @@ def organize(ctx, directory, dry_run, output_dir):
     click.echo(f"\n{'='*60}")
     click.echo(f"Total files: {total_count}")
     click.echo(f"Files to organize: {changed_count}")
-    click.echo(f"Output directory: {output_path.absolute()}")
+    
+    # Show output directories summary
+    output_dirs = config.get('organization.output_directories', {})
+    default_output = Path(config.get('organization.output_directory', 'organized_media'))
+    click.echo("Output directories (see above for details):")
+    for category in ['movies', 'tv_shows', 'music', 'photos', 'unsorted']:
+        cat_dir = output_dirs.get(category, '')
+        if cat_dir and cat_dir.strip():
+            click.echo(f"  {category}: {Path(cat_dir).absolute()}")
+        else:
+            click.echo(f"  {category}: {default_output.absolute() / category}")
     click.echo(f"{'='*60}")
     
     if not dry_run:
@@ -322,7 +362,7 @@ def organize(ctx, directory, dry_run, output_dir):
         move_progress = tqdm(total=changed_count, desc="Organizing files", unit="file", ncols=100)
         
         for file_path in files:
-            move_plan = organizer.plan_file_move(file_path, output_path)
+            move_plan = organizer.plan_file_move(file_path, None)
             if move_plan['changed']:
                 if organizer.execute_move(move_plan, dry_run=False):
                     success_count += 1
@@ -331,7 +371,15 @@ def organize(ctx, directory, dry_run, output_dir):
         move_progress.close()
         
         click.echo(f"\nSuccessfully organized {success_count} files!")
-        click.echo(f"Check the organized structure in: {output_path.absolute()}")
+        output_dirs = config.get('organization.output_directories', {})
+        default_output = Path(config.get('organization.output_directory', 'organized_media'))
+        click.echo("Files organized into:")
+        for category in ['movies', 'tv_shows', 'music', 'photos', 'unsorted']:
+            cat_dir = output_dirs.get(category, '')
+            if cat_dir and cat_dir.strip():
+                click.echo(f"  {category}: {Path(cat_dir).absolute()}")
+            else:
+                click.echo(f"  {category}: {default_output.absolute() / category}")
     else:
         click.echo("\nRun without --dry-run to apply changes")
 

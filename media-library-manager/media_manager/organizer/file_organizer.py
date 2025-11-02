@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime
 
-from ..utils.file_utils import clean_filename, get_file_extension, get_file_mtime
+from ..utils.file_utils import clean_filename, get_file_extension, get_file_mtime, get_file_size
 
 
 class FileOrganizer:
@@ -257,25 +257,151 @@ class FileOrganizer:
         
         return new_name + extension
     
+    def _is_sample_or_junk_file(self, file_path: Path) -> bool:
+        """
+        Determine if a file is a sample or junk file that should not be moved with the main movie.
+        
+        Args:
+            file_path: File to check
+        
+        Returns:
+            True if file is sample/junk, False otherwise
+        """
+        if not file_path.exists():
+            return False
+        
+        filename_lower = file_path.name.lower()
+        
+        try:
+            file_size = get_file_size(file_path)
+        except (OSError, IOError):
+            return False
+        
+        # Check for sample indicators in filename
+        sample_patterns = [
+            r'\bsample\b',
+            r'\btrailer\b',
+            r'\bpreview\b',
+            r'^sample',
+            r'sample\.',
+            r'-sample',
+        ]
+        
+        # Check if filename contains sample-related keywords
+        is_sample_name = any(re.search(pattern, filename_lower) for pattern in sample_patterns)
+        
+        # Small video files (< 50MB) with sample-like names are likely samples
+        if is_sample_name:
+            video_exts = ['.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm']
+            if any(file_path.name.lower().endswith(ext) for ext in video_exts):
+                if file_size < 50 * 1024 * 1024:  # Less than 50MB
+                    return True
+        
+        # Very small video files (< 10MB) are likely samples regardless of name
+        video_exts = ['.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm']
+        if any(file_path.name.lower().endswith(ext) for ext in video_exts):
+            if file_size < 10 * 1024 * 1024:  # Less than 10MB
+                return True
+        
+        return False
+    
+    def _should_keep_with_main_file(self, file_path: Path) -> bool:
+        """
+        Determine if an associated file should be kept with the main movie file.
+        Always keep images, metadata, and subtitles. When in doubt, keep files together.
+        
+        Args:
+            file_path: Associated file to check
+        
+        Returns:
+            True if file should be kept with main file, False otherwise
+        """
+        extension = get_file_extension(file_path).lower()
+        filename_lower = file_path.name.lower()
+        
+        # Always keep images with main file
+        image_exts = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif']
+        if extension in image_exts:
+            return True
+        
+        # Always keep metadata files with main file
+        metadata_exts = ['.nfo', '.xml', '.txt']
+        if extension in metadata_exts:
+            return True
+        
+        # Always keep subtitle files with main file
+        subtitle_exts = ['.srt', '.vtt', '.ass', '.ssa', '.sub', '.idx']
+        if extension in subtitle_exts:
+            return True
+        
+        # For other files, check if they're samples/junk
+        # If it's clearly a sample/junk, don't move it with the main file
+        if self._is_sample_or_junk_file(file_path):
+            return False
+        
+        # When in doubt (unknown file type, not clearly junk), keep with main file
+        # This is the conservative approach the user requested
+        return True
+    
     def find_associated_files(self, file_path: Path) -> List[Path]:
         """
-        Find files associated with this media file (subtitles, NFO, etc.).
+        Find files associated with this media file.
+        Only includes files that should be kept with the main file (images, metadata, subtitles).
+        Sample and junk files are excluded.
         
         Args:
             file_path: Main media file
         
         Returns:
-            List of associated file paths
+            List of associated file paths that should be kept with the main file
         """
         associated = []
-        base_path = file_path.parent / file_path.stem
+        directory = file_path.parent
         
-        # Common associated file extensions
-        associated_exts = ['.srt', '.vtt', '.idx', '.sub', '.nfo', '.jpg', '.png']
+        # Get the main file's base name (without extension)
+        main_base = file_path.stem.lower()
         
-        for ext in associated_exts:
-            potential_file = base_path.with_suffix(ext)
-            if potential_file.exists() and potential_file != file_path:
+        # Common associated file patterns (poster, fanart, etc.)
+        common_patterns = ['poster', 'fanart', 'banner', 'logo', 'clearart', 'thumb', 'backdrop']
+        
+        # Look for files in the same directory that might be associated
+        for potential_file in directory.iterdir():
+            if potential_file == file_path or not potential_file.is_file():
+                continue
+            
+            potential_base = potential_file.stem.lower()
+            extension = get_file_extension(potential_file).lower()
+            
+            # Always check if file should be kept first (fast check for images/metadata)
+            if not self._should_keep_with_main_file(potential_file):
+                continue
+            
+            # Check if file has same base name (exact match or variations)
+            is_similar_name = (
+                potential_base == main_base or
+                potential_base.startswith(main_base + '-') or
+                potential_base.startswith(main_base + '_') or
+                potential_base.startswith(main_base + '.') or
+                main_base.startswith(potential_base)
+            )
+            
+            # Also check for common associated file naming patterns
+            # e.g., "Movie Name-poster.jpg" or "Movie Name.fanart.jpg"
+            is_common_pattern = any(
+                pattern in potential_base and (main_base in potential_base or potential_base in main_base)
+                for pattern in common_patterns
+            )
+            
+            # For images and metadata in the same directory, be more lenient
+            # If it's an image or metadata file, assume it's associated if name overlaps
+            is_image_or_metadata = extension in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif', '.nfo', '.xml']
+            is_directory_match = (
+                is_image_or_metadata and
+                (potential_base.startswith(main_base[:10]) or main_base.startswith(potential_base[:10]))
+            )
+            
+            # Include if it matches any of these criteria
+            if is_similar_name or is_common_pattern or is_directory_match:
                 associated.append(potential_file)
         
         return associated
@@ -300,9 +426,17 @@ class FileOrganizer:
         
         # Determine target base directory
         if target_base_dir is None:
-            # Use configured output directory or create one
-            output_dir = self.config.get('organization.output_directory', 'organized_media')
-            target_base_dir = Path(output_dir)
+            # Check for category-specific output directory
+            output_dirs = self.config.get('organization.output_directories', {})
+            category_dir = output_dirs.get(media_type, '')
+            
+            if category_dir and category_dir.strip():
+                # Use category-specific directory
+                target_base_dir = Path(category_dir)
+            else:
+                # Use default output directory
+                output_dir = self.config.get('organization.output_directory', 'organized_media')
+                target_base_dir = Path(output_dir)
         
         # Create organized directory structure
         target_dir = self.create_directory_structure(target_base_dir, media_type, pattern_info)
@@ -338,7 +472,7 @@ class FileOrganizer:
         Create organized directory structure.
         
         Args:
-            base_path: Base directory
+            base_path: Base directory (may already be category-specific)
             media_type: Type of media (movie, tv, music, etc.)
             pattern_info: Extracted pattern information
         
@@ -356,8 +490,18 @@ class FileOrganizer:
         # Start with base path
         new_path = base_path
         
-        # Organize by media type first
-        if media_type:
+        # Check if base_path is already a category-specific directory
+        # by checking if it matches any configured category directory
+        output_dirs = self.config.get('organization.output_directories', {})
+        is_category_specific = False
+        for category, cat_dir in output_dirs.items():
+            if cat_dir and cat_dir.strip() and str(base_path) == str(Path(cat_dir)):
+                is_category_specific = True
+                break
+        
+        # Only add media_type subdirectory if base_path is not category-specific
+        # and organize_by is 'type'
+        if not is_category_specific and media_type and organize_by == 'type':
             new_path = new_path / media_type
         
         # Additional organization based on media type
