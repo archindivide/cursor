@@ -40,3 +40,4 @@ config/local_config.yaml
 *.log
 *.db
 .cache/
+organized_media/

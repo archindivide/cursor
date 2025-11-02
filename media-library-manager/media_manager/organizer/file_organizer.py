@@ -2,6 +2,8 @@
 
 import logging
 import re
+import os
+import shutil
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime
@@ -762,33 +764,53 @@ class FileOrganizer:
         except Exception as e:
             self.logger.error(f"Error saving original structure mapping: {e}")
     
-    def _cleanup_empty_directories(self, directories: List[Path]) -> int:
+    def _cleanup_empty_directories(self, directories: List[Path], recursive: bool = True) -> int:
         """
         Clean up empty directories after files have been moved.
+        Recursively cleans up parent directories if they become empty.
         
         Args:
             directories: List of directory paths to check and clean up
+            recursive: If True, also clean up parent directories that become empty
         
         Returns:
             Number of directories removed
         """
         removed_count = 0
+        removed_dirs = set()
         
         # Sort directories by depth (deepest first) to avoid deleting parent before child
         directories_sorted = sorted(directories, key=lambda p: len(p.parts), reverse=True)
         
         for directory in directories_sorted:
-            try:
-                # Only remove if directory exists and is empty
-                if directory.exists() and directory.is_dir():
-                    # Check if directory is empty (no files, only empty subdirectories)
-                    try:
-                        contents = list(directory.iterdir())
+            # Recursively clean up this directory and its parents
+            current_dir = directory
+            while current_dir and current_dir.exists():
+                if current_dir in removed_dirs:
+                    break
+                
+                try:
+                    if current_dir.is_dir():
+                        contents = list(current_dir.iterdir())
+                        
+                        # Check if directory is empty
                         if not contents:
                             # Directory is completely empty, remove it
-                            directory.rmdir()
-                            self.logger.info(f"Removed empty directory: {directory}")
-                            removed_count += 1
+                            try:
+                                current_dir.rmdir()
+                                self.logger.info(f"Removed empty directory: {current_dir}")
+                                removed_dirs.add(current_dir)
+                                removed_count += 1
+                                
+                                # Continue with parent directory if recursive
+                                if recursive:
+                                    current_dir = current_dir.parent
+                                    continue
+                                else:
+                                    break
+                            except OSError as e:
+                                self.logger.debug(f"Could not remove directory {current_dir}: {e}")
+                                break
                         else:
                             # Check if only empty subdirectories remain
                             has_files = any(item.is_file() for item in contents)
@@ -797,28 +819,290 @@ class FileOrganizer:
                                 for item in contents:
                                     if item.is_dir():
                                         try:
-                                            # Try to remove empty subdirectory
-                                            item.rmdir()
-                                            self.logger.debug(f"Removed empty subdirectory: {item}")
+                                            sub_contents = list(item.iterdir())
+                                            if not sub_contents:
+                                                item.rmdir()
+                                                self.logger.debug(f"Removed empty subdirectory: {item}")
                                         except OSError:
-                                            # Subdirectory not empty or error, skip
                                             pass
                                 
                                 # Check again if directory is now empty
                                 try:
-                                    if not list(directory.iterdir()):
-                                        directory.rmdir()
-                                        self.logger.info(f"Removed empty directory: {directory}")
+                                    if not list(current_dir.iterdir()):
+                                        current_dir.rmdir()
+                                        self.logger.info(f"Removed empty directory: {current_dir}")
+                                        removed_dirs.add(current_dir)
                                         removed_count += 1
+                                        
+                                        # Continue with parent directory if recursive
+                                        if recursive:
+                                            current_dir = current_dir.parent
+                                            continue
+                                        else:
+                                            break
                                 except OSError:
-                                    # Directory not empty or error, skip
-                                    pass
-                    except (OSError, PermissionError) as e:
-                        self.logger.debug(f"Error checking directory {directory}: {e}")
-            except (OSError, PermissionError) as e:
-                self.logger.debug(f"Error removing directory {directory}: {e}")
+                                    break
+                            else:
+                                # Directory has files, stop cleaning
+                                break
+                    else:
+                        break
+                except (OSError, PermissionError) as e:
+                    self.logger.debug(f"Error checking directory {current_dir}: {e}")
+                    break
         
         return removed_count
+    
+    def _cleanup_output_directory(self, output_dir: Path) -> Dict[str, int]:
+        """
+        Clean up the output directory structure.
+        Moves unwanted files/junk to unorganized folders instead of deleting them.
+        
+        Args:
+            output_dir: Root output directory to clean up
+        
+        Returns:
+            Dictionary with cleanup statistics
+        """
+        stats = {
+            'empty_dirs_removed': 0,
+            'files_moved_to_unorganized': 0,
+            'dirs_moved_to_unorganized': 0
+        }
+        
+        if not output_dir.exists():
+            return stats
+        
+        # Files that should be moved to unorganized (not deleted)
+        unorganized_file_patterns = [
+            'thumbs.db',
+            '.ds_store',
+            'desktop.ini',
+            'folder.jpg',
+        ]
+        
+        # Directories that should be moved to unorganized
+        unorganized_dir_patterns = [
+            '__pycache__',
+            '.git',
+            '.svn',
+            '.cache',
+        ]
+        
+        # Category folders that should have their own unorganized_files
+        category_folders = ['movies', 'tv_shows', 'music', 'photos']
+        
+        # Map of category folders to their unorganized_files directories
+        category_unorganized_dirs = {}
+        for category in category_folders:
+            category_dir = output_dir / category
+            if category_dir.exists():
+                unorganized_dir = category_dir / 'unorganized_files'
+                unorganized_dir.mkdir(parents=True, exist_ok=True)
+                category_unorganized_dirs[category_dir] = unorganized_dir
+        
+        try:
+            # Walk through output directory and collect files
+            for root, dirs, files in os.walk(output_dir, topdown=False):
+                root_path = Path(root)
+                
+                # Skip the unorganized_files directories themselves
+                if any(unorganized_dir == root_path or unorganized_dir in root_path.parents 
+                       for unorganized_dir in category_unorganized_dirs.values()):
+                    continue
+                
+                # Determine which category folder this path belongs to
+                target_unorganized_dir = None
+                for category_dir, unorganized_dir in category_unorganized_dirs.items():
+                    if root_path == category_dir or category_dir in root_path.parents:
+                        target_unorganized_dir = unorganized_dir
+                        break
+                
+                # If we're in a category folder, use its unorganized_files
+                # Otherwise, find the closest category parent
+                if not target_unorganized_dir:
+                    # Check if we're in a subdirectory of a category
+                    for category_dir, unorganized_dir in category_unorganized_dirs.items():
+                        try:
+                            root_path.relative_to(category_dir)
+                            target_unorganized_dir = unorganized_dir
+                            break
+                        except ValueError:
+                            continue
+                
+                # If still no category found, skip (we're outside categories or at root)
+                if not target_unorganized_dir:
+                    continue
+                
+                # Move unwanted files to unorganized
+                for file_name in files:
+                    file_path = root_path / file_name
+                    file_lower = file_name.lower()
+                    
+                    # Check if it should be moved to unorganized
+                    if any(pattern in file_lower for pattern in unorganized_file_patterns):
+                        try:
+                            # Determine the category folder this file is in
+                            file_category_dir = None
+                            for category_dir in category_unorganized_dirs.keys():
+                                try:
+                                    file_path.relative_to(category_dir)
+                                    file_category_dir = category_dir
+                                    break
+                                except ValueError:
+                                    continue
+                            
+                            if not file_category_dir:
+                                continue
+                            
+                            # Create subdirectory structure in category's unorganized_files
+                            relative_to_category = file_path.relative_to(file_category_dir)
+                            unorganized_dir = category_unorganized_dirs[file_category_dir]
+                            
+                            # If file is directly in category folder, put it directly in unorganized_files
+                            if relative_to_category.parent == Path('.'):
+                                dest_path = unorganized_dir / file_name
+                            else:
+                                # Preserve subdirectory structure within unorganized_files
+                                # Skip the file name itself, we only want the directory structure
+                                if len(relative_to_category.parts) > 1:
+                                    dest_path = unorganized_dir / relative_to_category.parent / file_name
+                                else:
+                                    dest_path = unorganized_dir / file_name
+                            
+                            # Ensure destination directory exists
+                            dest_path.parent.mkdir(parents=True, exist_ok=True)
+                            
+                            # Move file
+                            move_file_cross_device(file_path, dest_path)
+                            self.logger.info(f"Moved file to unorganized: {file_path} -> {dest_path}")
+                            stats['files_moved_to_unorganized'] += 1
+                        except Exception as e:
+                            self.logger.debug(f"Could not move file {file_path}: {e}")
+                
+                # Move unwanted directories to unorganized
+                dirs_to_process = list(dirs)  # Copy list since we're modifying it
+                for dir_name in dirs_to_process:
+                    dir_path = root_path / dir_name
+                    dir_lower = dir_name.lower()
+                    
+                    # Skip if it's an unorganized_files directory
+                    if any(unorganized_dir == dir_path or unorganized_dir in dir_path.parents
+                           for unorganized_dir in category_unorganized_dirs.values()):
+                        continue
+                    
+                    # Check if it should be moved to unorganized
+                    if any(pattern in dir_lower for pattern in unorganized_dir_patterns):
+                        try:
+                            # Determine which category folder this directory is in
+                            dir_category_dir = None
+                            for category_dir in category_unorganized_dirs.keys():
+                                try:
+                                    dir_path.relative_to(category_dir)
+                                    dir_category_dir = category_dir
+                                    break
+                                except ValueError:
+                                    continue
+                            
+                            if not dir_category_dir:
+                                continue
+                            
+                            # Create destination path in category's unorganized_files
+                            relative_to_category = dir_path.relative_to(dir_category_dir)
+                            unorganized_dir = category_unorganized_dirs[dir_category_dir]
+                            
+                            # Preserve directory structure within unorganized_files
+                            if relative_to_category.parent == Path('.'):
+                                dest_path = unorganized_dir / dir_name
+                            else:
+                                dest_path = unorganized_dir / relative_to_category.parent / dir_name
+                            
+                            # Ensure parent directory exists
+                            dest_path.parent.mkdir(parents=True, exist_ok=True)
+                            
+                            # Move directory
+                            if dest_path.exists():
+                                # If destination exists, merge contents
+                                for item in dir_path.iterdir():
+                                    item_dest = dest_path / item.name
+                                    if item.is_file():
+                                        if item_dest.exists():
+                                            # Append number if file exists
+                                            counter = 1
+                                            stem = item_dest.stem
+                                            suffix = item_dest.suffix
+                                            while item_dest.exists():
+                                                item_dest = dest_path / f"{stem}_{counter}{suffix}"
+                                                counter += 1
+                                        move_file_cross_device(item, item_dest)
+                                    elif item.is_dir():
+                                        if item_dest.exists():
+                                            # Merge directories recursively
+                                            for subitem in item.iterdir():
+                                                subitem_dest = item_dest / subitem.name
+                                                if subitem.is_file():
+                                                    if subitem_dest.exists():
+                                                        counter = 1
+                                                        stem = subitem_dest.stem
+                                                        suffix = subitem_dest.suffix
+                                                        while subitem_dest.exists():
+                                                            subitem_dest = item_dest / f"{stem}_{counter}{suffix}"
+                                                            counter += 1
+                                                    move_file_cross_device(subitem, subitem_dest)
+                                                else:
+                                                    # Recursively copy directory
+                                                    if not subitem_dest.exists():
+                                                        shutil.copytree(subitem, subitem_dest)
+                                                    # Remove source subdirectory after copying
+                                                    if item.exists():
+                                                        try:
+                                                            shutil.rmtree(subitem)
+                                                        except OSError:
+                                                            pass
+                                        else:
+                                            # Simple move for subdirectory
+                                            item.rename(item_dest)
+                                # Remove source directory if empty
+                                try:
+                                    if not list(dir_path.iterdir()):
+                                        dir_path.rmdir()
+                                except OSError:
+                                    pass
+                            else:
+                                # Simple move - use cross-device move for safety
+                                try:
+                                    # Try rename first (fast)
+                                    dir_path.rename(dest_path)
+                                except OSError:
+                                    # If rename fails (cross-device), use copy+delete
+                                    shutil.copytree(dir_path, dest_path)
+                                    shutil.rmtree(dir_path)
+                            
+                            self.logger.info(f"Moved directory to unorganized: {dir_path} -> {dest_path}")
+                            stats['dirs_moved_to_unorganized'] += 1
+                        except Exception as e:
+                            self.logger.debug(f"Could not move directory {dir_path}: {e}")
+                
+                # Try to remove empty directory (but not unorganized_files directories or category folders)
+                is_unorganized_dir = any(unorganized_dir == root_path or unorganized_dir in root_path.parents
+                                       for unorganized_dir in category_unorganized_dirs.values())
+                is_category_dir = root_path in category_unorganized_dirs.keys()
+                
+                if root_path != output_dir and not is_unorganized_dir and not is_category_dir:
+                    try:
+                        contents = list(root_path.iterdir())
+                        if not contents:
+                            root_path.rmdir()
+                            self.logger.info(f"Removed empty output directory: {root_path}")
+                            stats['empty_dirs_removed'] += 1
+                    except OSError:
+                        # Directory not empty or error, skip
+                        pass
+                    
+        except Exception as e:
+            self.logger.error(f"Error cleaning up output directory: {e}")
+        
+        return stats
     
     def execute_move(self, move_plan: Dict, dry_run: bool = False) -> bool:
         """

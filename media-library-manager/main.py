@@ -381,9 +381,34 @@ def organize(ctx, directory, dry_run, output_dir, movies_dir, tv_shows_dir, musi
         # Clean up empty directories
         if source_directories:
             click.echo("\nCleaning up empty directories...")
-            removed_count = organizer._cleanup_empty_directories(list(source_directories))
+            removed_count = organizer._cleanup_empty_directories(list(source_directories), recursive=True)
             if removed_count > 0:
                 click.echo(f"Removed {removed_count} empty directory(ies)")
+        
+        # Clean up output directory structure
+        output_dirs = config.get('organization.output_directories', {})
+        default_output = Path(config.get('organization.output_directory', 'organized_media'))
+        
+        # Clean up output directories
+        output_to_clean = [default_output]
+        for category, cat_dir in output_dirs.items():
+            if cat_dir and cat_dir.strip():
+                output_to_clean.append(Path(cat_dir))
+        
+        for output_dir in set(output_to_clean):  # Remove duplicates
+            if output_dir.exists():
+                click.echo(f"\nCleaning up output directory: {output_dir}")
+                cleanup_stats = organizer._cleanup_output_directory(output_dir)
+                
+                total_cleaned = sum(cleanup_stats.values())
+                if total_cleaned > 0:
+                    click.echo(f"  Removed {cleanup_stats['empty_dirs_removed']} empty directory(ies)")
+                    if cleanup_stats['files_moved_to_unorganized'] > 0:
+                        click.echo(f"  Moved {cleanup_stats['files_moved_to_unorganized']} file(s) to unorganized_files/")
+                    if cleanup_stats['dirs_moved_to_unorganized'] > 0:
+                        click.echo(f"  Moved {cleanup_stats['dirs_moved_to_unorganized']} directory(ies) to unorganized_files/")
+                else:
+                    click.echo("  Output directory is clean")
         
         click.echo(f"\nSuccessfully organized {success_count} files!")
         
