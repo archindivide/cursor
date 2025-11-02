@@ -450,7 +450,7 @@ class FileOrganizer:
                 target_base_dir = Path(output_dir)
         
         # Create organized directory structure
-        target_dir = self.create_directory_structure(target_base_dir, media_type, pattern_info, is_recognized)
+        target_dir = self.create_directory_structure(target_base_dir, media_type, pattern_info, is_recognized, file_path)
         
         new_path = target_dir / new_name
         
@@ -482,7 +482,57 @@ class FileOrganizer:
             'target_dir': target_dir
         }
     
-    def create_directory_structure(self, base_path: Path, media_type: str = None, pattern_info: Dict = None, is_recognized: bool = True) -> Path:
+    def _preserve_unorganized_structure(self, file_path: Path, base_path: Path, media_type: str) -> Path:
+        """
+        For unorganized files, preserve some of the original directory structure
+        to keep related files together.
+        
+        Args:
+            file_path: Original file path
+            base_path: Base path for the media type
+            media_type: Type of media
+        
+        Returns:
+            Path with preserved structure
+        """
+        # For unorganized files, preserve the last 2-3 levels of directory structure
+        # This keeps files from the same source together
+        try:
+            # Get relative parts of the original path
+            # Try to preserve meaningful directory names (not too deep)
+            source_parts = file_path.parent.parts
+            
+            # Only preserve if there are meaningful directory names
+            # Skip very generic names like "Downloads", "Desktop", etc.
+            generic_names = {'downloads', 'desktop', 'documents', 'videos', 'pictures', 'music'}
+            
+            preserved_parts = []
+            for part in reversed(source_parts[-3:]):  # Take last 3 levels
+                if part.lower() not in generic_names and len(part) > 2:
+                    preserved_parts.insert(0, part)
+                else:
+                    break
+            
+            # If we have preserved parts, create structure
+            if preserved_parts:
+                # Sanitize directory names
+                sanitized_parts = [self.sanitize_filename(part) for part in preserved_parts]
+                sanitized_parts = [part.replace(' ', '.') for part in sanitized_parts if part]
+                
+                if sanitized_parts:
+                    # Create path with preserved structure under unorganized
+                    unorganized_path = base_path / media_type / 'unorganized'
+                    for part in sanitized_parts[:2]:  # Limit to 2 levels max
+                        unorganized_path = unorganized_path / part
+                    return unorganized_path
+            
+        except Exception as e:
+            self.logger.debug(f"Error preserving structure for {file_path}: {e}")
+        
+        # Default: just use unorganized folder
+        return base_path / media_type / 'unorganized'
+    
+    def create_directory_structure(self, base_path: Path, media_type: str = None, pattern_info: Dict = None, is_recognized: bool = True, file_path: Path = None) -> Path:
         """
         Create organized directory structure.
         
@@ -528,7 +578,33 @@ class FileOrganizer:
                 pass
             else:
                 # Unrecognized movies go to movies/unorganized/
-                new_path = new_path / 'unorganized'
+                # Preserve some directory structure to keep files together
+                if file_path:
+                    preserved_path = self._preserve_unorganized_structure(file_path, base_path, media_type)
+                    # Check if base_path is category-specific
+                    output_dirs = self.config.get('organization.output_directories', {})
+                    is_category_specific = any(
+                        cat_dir and cat_dir.strip() and str(base_path) == str(Path(cat_dir))
+                        for cat_dir in output_dirs.values()
+                    )
+                    
+                    if is_category_specific:
+                        # Already at category-specific path, just add unorganized
+                        new_path = new_path / 'unorganized'
+                        # Try to preserve structure from file_path
+                        try:
+                            source_parts = file_path.parent.parts[-2:]  # Last 2 levels
+                            if source_parts:
+                                for part in source_parts:
+                                    if len(part) > 2 and part.lower() not in {'downloads', 'desktop', 'videos'}:
+                                        sanitized = self.sanitize_filename(part).replace(' ', '.')
+                                        new_path = new_path / sanitized
+                        except Exception:
+                            pass
+                    else:
+                        new_path = preserved_path
+                else:
+                    new_path = new_path / 'unorganized'
         
         elif media_type == 'tv_shows':
             if is_recognized and pattern_info and pattern_info.get('title'):
@@ -545,7 +621,30 @@ class FileOrganizer:
                     new_path = new_path / season
             else:
                 # Unrecognized TV shows go to tv_shows/unorganized/
-                new_path = new_path / 'unorganized'
+                # Preserve structure to keep files together
+                if file_path:
+                    preserved_path = self._preserve_unorganized_structure(file_path, base_path, media_type)
+                    output_dirs = self.config.get('organization.output_directories', {})
+                    is_category_specific = any(
+                        cat_dir and cat_dir.strip() and str(base_path) == str(Path(cat_dir))
+                        for cat_dir in output_dirs.values()
+                    )
+                    
+                    if is_category_specific:
+                        new_path = new_path / 'unorganized'
+                        try:
+                            source_parts = file_path.parent.parts[-2:]
+                            if source_parts:
+                                for part in source_parts:
+                                    if len(part) > 2 and part.lower() not in {'downloads', 'desktop', 'videos'}:
+                                        sanitized = self.sanitize_filename(part).replace(' ', '.')
+                                        new_path = new_path / sanitized
+                        except Exception:
+                            pass
+                    else:
+                        new_path = preserved_path
+                else:
+                    new_path = new_path / 'unorganized'
         
         elif media_type == 'music':
             if is_recognized:
@@ -553,7 +652,30 @@ class FileOrganizer:
                 pass
             else:
                 # Unrecognized music goes to music/unorganized/
-                new_path = new_path / 'unorganized'
+                # Preserve structure to keep files together
+                if file_path:
+                    preserved_path = self._preserve_unorganized_structure(file_path, base_path, media_type)
+                    output_dirs = self.config.get('organization.output_directories', {})
+                    is_category_specific = any(
+                        cat_dir and cat_dir.strip() and str(base_path) == str(Path(cat_dir))
+                        for cat_dir in output_dirs.values()
+                    )
+                    
+                    if is_category_specific:
+                        new_path = new_path / 'unorganized'
+                        try:
+                            source_parts = file_path.parent.parts[-2:]
+                            if source_parts:
+                                for part in source_parts:
+                                    if len(part) > 2 and part.lower() not in {'downloads', 'desktop', 'music'}:
+                                        sanitized = self.sanitize_filename(part).replace(' ', '.')
+                                        new_path = new_path / sanitized
+                        except Exception:
+                            pass
+                    else:
+                        new_path = preserved_path
+                else:
+                    new_path = new_path / 'unorganized'
         
         elif media_type == 'photos':
             if is_recognized:
@@ -561,7 +683,30 @@ class FileOrganizer:
                 pass
             else:
                 # Unrecognized photos go to photos/unorganized/
-                new_path = new_path / 'unorganized'
+                # Preserve structure to keep files together
+                if file_path:
+                    preserved_path = self._preserve_unorganized_structure(file_path, base_path, media_type)
+                    output_dirs = self.config.get('organization.output_directories', {})
+                    is_category_specific = any(
+                        cat_dir and cat_dir.strip() and str(base_path) == str(Path(cat_dir))
+                        for cat_dir in output_dirs.values()
+                    )
+                    
+                    if is_category_specific:
+                        new_path = new_path / 'unorganized'
+                        try:
+                            source_parts = file_path.parent.parts[-2:]
+                            if source_parts:
+                                for part in source_parts:
+                                    if len(part) > 2 and part.lower() not in {'downloads', 'desktop', 'pictures', 'photos'}:
+                                        sanitized = self.sanitize_filename(part).replace(' ', '.')
+                                        new_path = new_path / sanitized
+                        except Exception:
+                            pass
+                    else:
+                        new_path = preserved_path
+                else:
+                    new_path = new_path / 'unorganized'
         
         # Create directory
         new_path.mkdir(parents=True, exist_ok=True)
@@ -617,6 +762,64 @@ class FileOrganizer:
         except Exception as e:
             self.logger.error(f"Error saving original structure mapping: {e}")
     
+    def _cleanup_empty_directories(self, directories: List[Path]) -> int:
+        """
+        Clean up empty directories after files have been moved.
+        
+        Args:
+            directories: List of directory paths to check and clean up
+        
+        Returns:
+            Number of directories removed
+        """
+        removed_count = 0
+        
+        # Sort directories by depth (deepest first) to avoid deleting parent before child
+        directories_sorted = sorted(directories, key=lambda p: len(p.parts), reverse=True)
+        
+        for directory in directories_sorted:
+            try:
+                # Only remove if directory exists and is empty
+                if directory.exists() and directory.is_dir():
+                    # Check if directory is empty (no files, only empty subdirectories)
+                    try:
+                        contents = list(directory.iterdir())
+                        if not contents:
+                            # Directory is completely empty, remove it
+                            directory.rmdir()
+                            self.logger.info(f"Removed empty directory: {directory}")
+                            removed_count += 1
+                        else:
+                            # Check if only empty subdirectories remain
+                            has_files = any(item.is_file() for item in contents)
+                            if not has_files:
+                                # Try to remove empty subdirectories first
+                                for item in contents:
+                                    if item.is_dir():
+                                        try:
+                                            # Try to remove empty subdirectory
+                                            item.rmdir()
+                                            self.logger.debug(f"Removed empty subdirectory: {item}")
+                                        except OSError:
+                                            # Subdirectory not empty or error, skip
+                                            pass
+                                
+                                # Check again if directory is now empty
+                                try:
+                                    if not list(directory.iterdir()):
+                                        directory.rmdir()
+                                        self.logger.info(f"Removed empty directory: {directory}")
+                                        removed_count += 1
+                                except OSError:
+                                    # Directory not empty or error, skip
+                                    pass
+                    except (OSError, PermissionError) as e:
+                        self.logger.debug(f"Error checking directory {directory}: {e}")
+            except (OSError, PermissionError) as e:
+                self.logger.debug(f"Error removing directory {directory}: {e}")
+        
+        return removed_count
+    
     def execute_move(self, move_plan: Dict, dry_run: bool = False) -> bool:
         """
         Execute a planned file move.
@@ -667,6 +870,15 @@ class FileOrganizer:
             # Save original structure mapping for unorganized files
             if file_mappings and not move_plan.get('is_recognized', True):
                 self._save_original_structure(move_plan['target_dir'], file_mappings)
+            
+            # Track source directory for cleanup (if we moved from a different location)
+            if move_plan['changed'] and move_plan['from'].parent != move_plan['to'].parent:
+                source_dir = move_plan['from'].parent
+                if source_dir.exists():
+                    # Store source directory for later cleanup
+                    if not hasattr(self, '_source_directories'):
+                        self._source_directories = set()
+                    self._source_directories.add(source_dir)
             
             return True
             

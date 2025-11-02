@@ -362,14 +362,28 @@ def organize(ctx, directory, dry_run, output_dir, movies_dir, tv_shows_dir, musi
         success_count = 0
         move_progress = tqdm(total=changed_count, desc="Organizing files", unit="file", ncols=100)
         
+        # Track all source directories for cleanup
+        source_directories = set()
+        
         for file_path in files:
             move_plan = organizer.plan_file_move(file_path, None)
             if move_plan['changed']:
                 if organizer.execute_move(move_plan, dry_run=False):
                     success_count += 1
+                    # Track source directory for cleanup
+                    source_dir = move_plan['from'].parent
+                    if source_dir.exists() and source_dir != move_plan['to'].parent:
+                        source_directories.add(source_dir)
                 move_progress.update(1)
         
         move_progress.close()
+        
+        # Clean up empty directories
+        if source_directories:
+            click.echo("\nCleaning up empty directories...")
+            removed_count = organizer._cleanup_empty_directories(list(source_directories))
+            if removed_count > 0:
+                click.echo(f"Removed {removed_count} empty directory(ies)")
         
         click.echo(f"\nSuccessfully organized {success_count} files!")
         
