@@ -1,0 +1,24 @@
+# Media processing
+ffmpeg-python==0.2.0
+Pillow>=10.0.0
+
+# Metadata
+mutagen>=1.47.0
+tinytag>=1.8.1
+
+# API clients
+tmdbsimple>=2.9.1
+tvdb-api>=3.1.0
+requests>=2.31.0
+
+# Configuration
+PyYAML>=6.0
+
+# CLI
+click>=8.1.7
+tqdm>=4.66.0
+
+# Utilities
+python-dateutil>=2.8.2
+# Note: pathlib2 is only needed for Python < 3.4, but Python 3.7+ is now standard
+# Modern Python has pathlib built-in

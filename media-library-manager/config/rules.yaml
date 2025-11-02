@@ -1,0 +1,79 @@
+# Organization Rules
+
+# Movie naming patterns
+movie_patterns:
+  - pattern: "(.+?)\\s*\\(?(\\d{4})\\)?"
+    title_group: 1
+    year_group: 2
+  - pattern: "(.+?)\\s*\\[(.+?)\\]"
+    title_group: 1
+    extra_group: 2
+
+# TV Show naming patterns
+tv_patterns:
+  - pattern: "(.+?)\\s*S(\\d{2})E(\\d{2})"
+    show_group: 1
+    season_group: 2
+    episode_group: 3
+  - pattern: "(.+?)\\s*([0-9]+)x([0-9]+)"
+    show_group: 1
+    season_group: 2
+    episode_group: 3
+
+# Quality/resolution mapping
+quality_map:
+  2160p: "4K"
+  1080p: "1080p"
+  720p: "720p"
+  480p: "480p"
+  dvd: "480p"
+  hd: "720p"
+  fullhd: "1080p"
+  uhd: "4K"
+
+# Grouping rules
+grouping_rules:
+  # Genre-based
+  genre_directories:
+    action: ["action", "thriller", "adventure"]
+    drama: ["drama", "romance"]
+    comedy: ["comedy", "satire"]
+    horror: ["horror", "thriller"]
+    sci_fi: ["sci-fi", "fantasy", "fantasy"]
+    documentary: ["documentary", "biography"]
+    anime: ["anime", "animation"]
+  
+  # Year-based
+  year_groups:
+    - name: "Pre-1980"
+      range: [1900, 1979]
+    - name: "1980s"
+      range: [1980, 1989]
+    - name: "1990s"
+      range: [1990, 1999]
+    - name: "2000s"
+      range: [2000, 2009]
+    - name: "2010s"
+      range: [2010, 2019]
+    - name: "2020s"
+      range: [2020, 2030]
+
+# File type detection rules
+file_type_rules:
+  movie_indicators:
+    - keywords: ["movie", "film", "feature"]
+    - min_duration: 3600  # 1 hour
+    - exclude_keywords: ["episode", "season", "series"]
+  
+  tv_indicators:
+    - keywords: ["episode", "season", "series", "s01e01"]
+    - filename_patterns: ["S\\d+E\\d+", "\\d+x\\d+"]
+
+# Priority for keeping files when duplicates found
+keep_priority:
+  - highest_resolution
+  - best_codec
+  - smallest_size  # Same quality, keep smaller file
+  - best_audio
+  - has_subtitles
+  - oldest_mtime  # Tie-breaker

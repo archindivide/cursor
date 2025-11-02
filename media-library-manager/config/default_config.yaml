@@ -1,0 +1,77 @@
+# Media Library Manager Configuration
+
+# Paths to media files
+# Update these paths to match your system
+# Windows example: "C:/Users/YourName/Movies"
+# Linux example: "/media/movies"
+media_library:
+  movie_paths:
+    - "movies"  # Relative path - will be created in current directory
+  tv_show_paths:
+    - "tv_shows"  # Relative path - will be created in current directory
+  music_paths:
+    - "music"  # Relative path - will be created in current directory
+  photo_paths:
+    - "photos"  # Relative path - will be created in current directory
+
+# Duplicate detection settings
+duplicate_detection:
+  enabled: true
+  methods:
+    - hash        # MD5/SHA hash comparison
+    - metadata    # Metadata-based comparison
+    - fingerprint # Content fingerprinting
+  auto_remove: false
+  keep_criteria: "highest_quality"  # highest_quality, largest, oldest, newest
+  preview_mode: true
+
+# Metadata configuration
+metadata:
+  sources:
+    - embedded     # Extract from file metadata
+    - filename     # Parse from filename
+    - tmdb         # The Movie Database API
+    - tvdb         # TVDB API
+  api_keys:
+    tmdb: ""       # Get from https://www.themoviedb.org/settings/api
+    tvdb: ""       # Get from https://thetvdb.com/dashboard/account/apikey
+  cache_enabled: true
+  cache_location: ".cache/metadata.db"
+
+# File organization
+organization:
+  enabled: false
+  naming_pattern: "{title}.{year}.{extension}"  # Dot-separated format
+  create_subdirectories: true
+  organize_by: "type"  # type, genre, year, alphabet, none
+  output_directory: "organized_media"  # Where to create the new structure
+  preserve_subtitles: true
+  preserve_torrents: true
+  # Files not matching movie/TV patterns go to unsorted/ folder
+
+# NFO file generation
+nfo:
+  enabled: true
+  overwrite_existing: false
+  format: "kodi"  # kodi, plex
+  include_artwork: true
+  artwork_location: "posters"
+
+# Logging
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  file: "media_library_manager.log"
+  console: true
+
+# Advanced settings
+advanced:
+  max_workers: 4
+  chunk_size: 8192
+  hash_algorithm: "md5"  # md5, sha256
+  video_extensions: [".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm"]
+  audio_extensions: [".mp3", ".flac", ".ogg", ".m4a", ".wav", ".aac"]
+  photo_extensions: [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"]
+  ignore_patterns:
+    - "**/.DS_Store"
+    - "**/Thumbs.db"
+    - "**/*.log"
