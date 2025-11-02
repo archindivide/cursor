@@ -143,10 +143,15 @@ class FileOrganizer:
         
         return info
     
-    def _detect_media_type(self, file_path: Path) -> str:
+    def _detect_media_type(self, file_path: Path) -> tuple:
         """
         Detect media type based on filename patterns and extension.
-        Returns: 'movies', 'tv_shows', 'music', 'photos', or 'unsorted'
+        Also determines if the file is recognized (has proper pattern) or unorganized.
+        
+        Returns:
+            Tuple of (media_type, is_recognized) where:
+            - media_type: 'movies', 'tv_shows', 'music', 'photos'
+            - is_recognized: True if file matches known patterns, False if unorganized
         """
         filename = file_path.name.lower()
         extension = get_file_extension(file_path).lower()
@@ -156,24 +161,27 @@ class FileOrganizer:
         audio_exts = self.config.get('advanced.audio_extensions', [])
         photo_exts = self.config.get('advanced.photo_extensions', [])
         
-        # Check for TV show patterns first
-        if re.search(r's\d+e\d+', filename):
-            return 'tv_shows'
-        
         # Check if file has a known media extension
         is_video = extension in [ext.lower() for ext in video_exts]
         is_audio = extension in [ext.lower() for ext in audio_exts]
         is_photo = extension in [ext.lower() for ext in photo_exts]
         
         if is_video:
+            # Check for TV show patterns first
+            if re.search(r's\d+e\d+', filename):
+                pattern_info = self.extract_pattern_info(filename)
+                # TV shows with season/episode are recognized
+                is_recognized = bool(pattern_info.get('season') and pattern_info.get('episode'))
+                return ('tv_shows', is_recognized)
+            
             # Check if it could be a movie based on pattern
             pattern_info = self.extract_pattern_info(filename)
             
-            # If it has a clear movie/year pattern, it's a movie
+            # If it has a clear movie/year pattern, it's a recognized movie
             if pattern_info.get('year'):
-                return 'movies'
+                return ('movies', True)
             
-            # If it has a title that looks like a movie name, it's a movie
+            # If it has a title that looks like a movie name, it's a recognized movie
             if pattern_info.get('title') and len(pattern_info['title']) > 2:
                 # Check for common non-movie indicators
                 non_movie_patterns = [
@@ -187,18 +195,21 @@ class FileOrganizer:
                 )
                 
                 if not has_non_movie_pattern:
-                    return 'movies'
+                    return ('movies', True)
             
-            # If it's a video file but doesn't look like a movie, put in unsorted
-            return 'unsorted'
+            # Video file but doesn't match patterns - goes to movies/unorganized
+            return ('movies', False)
         
         elif is_audio:
-            return 'music'
+            # Audio files go to music (no pattern matching for now, so all are unorganized)
+            return ('music', False)
         elif is_photo:
-            return 'photos'
+            # Photo files go to photos (no pattern matching for now, so all are unorganized)
+            return ('photos', False)
         else:
-            # Unknown extension - put in unsorted
-            return 'unsorted'
+            # Unknown extension - default to movies/unorganized for backward compatibility
+            # Or we could skip it, but let's put it somewhere
+            return ('movies', False)
     
     def generate_new_filename(self, file_path: Path, pattern_info: Dict = None, media_type: str = None) -> str:
         """
@@ -417,8 +428,8 @@ class FileOrganizer:
         Returns:
             Dictionary with move plan information
         """
-        # Determine media type first
-        media_type = self._detect_media_type(file_path)
+        # Determine media type and whether it's recognized
+        media_type, is_recognized = self._detect_media_type(file_path)
         
         # Extract info
         pattern_info = self.extract_pattern_info(file_path.name)
@@ -439,7 +450,7 @@ class FileOrganizer:
                 target_base_dir = Path(output_dir)
         
         # Create organized directory structure
-        target_dir = self.create_directory_structure(target_base_dir, media_type, pattern_info)
+        target_dir = self.create_directory_structure(target_base_dir, media_type, pattern_info, is_recognized)
         
         new_path = target_dir / new_name
         
@@ -467,10 +478,11 @@ class FileOrganizer:
             'associated': associated_moves,
             'changed': str(file_path) != str(new_path),
             'media_type': media_type,
+            'is_recognized': is_recognized,
             'target_dir': target_dir
         }
     
-    def create_directory_structure(self, base_path: Path, media_type: str = None, pattern_info: Dict = None) -> Path:
+    def create_directory_structure(self, base_path: Path, media_type: str = None, pattern_info: Dict = None, is_recognized: bool = True) -> Path:
         """
         Create organized directory structure.
         
@@ -478,6 +490,7 @@ class FileOrganizer:
             base_path: Base directory (may already be category-specific)
             media_type: Type of media (movie, tv, music, etc.)
             pattern_info: Extracted pattern information
+            is_recognized: Whether the file matches known patterns (False = unorganized)
         
         Returns:
             Path to created directory
@@ -507,15 +520,19 @@ class FileOrganizer:
         if not is_category_specific and media_type and organize_by == 'type':
             new_path = new_path / media_type
         
-        # Additional organization based on media type
+        # Additional organization based on media type and recognition
         if media_type == 'movies':
-            # For movies, just create flat structure under movies/
-            # No subdirectories by year
-            pass
+            if is_recognized:
+                # For recognized movies, create flat structure under movies/
+                # No subdirectories by year
+                pass
+            else:
+                # Unrecognized movies go to movies/unorganized/
+                new_path = new_path / 'unorganized'
         
         elif media_type == 'tv_shows':
-            # Organize by show name for TV shows
-            if pattern_info and pattern_info.get('title'):
+            if is_recognized and pattern_info and pattern_info.get('title'):
+                # Organize by show name for recognized TV shows
                 show_name = pattern_info['title']
                 # Clean show name for directory
                 show_name = self.sanitize_filename(show_name)
@@ -526,11 +543,25 @@ class FileOrganizer:
                 if pattern_info.get('season'):
                     season = f"Season {pattern_info['season']}"
                     new_path = new_path / season
+            else:
+                # Unrecognized TV shows go to tv_shows/unorganized/
+                new_path = new_path / 'unorganized'
         
-        elif media_type == 'unsorted':
-            # For unsorted files, just put them in unsorted/ folder
-            # Keep original filename structure
-            pass
+        elif media_type == 'music':
+            if is_recognized:
+                # For recognized music, flat structure (future: organize by artist/album)
+                pass
+            else:
+                # Unrecognized music goes to music/unorganized/
+                new_path = new_path / 'unorganized'
+        
+        elif media_type == 'photos':
+            if is_recognized:
+                # For recognized photos, flat structure (future: organize by date)
+                pass
+            else:
+                # Unrecognized photos go to photos/unorganized/
+                new_path = new_path / 'unorganized'
         
         # Create directory
         new_path.mkdir(parents=True, exist_ok=True)
@@ -539,7 +570,7 @@ class FileOrganizer:
     
     def _save_original_structure(self, target_dir: Path, file_mappings: List[Dict[str, Path]]) -> None:
         """
-        Save original file structure mapping to a text file for unsorted files.
+        Save original file structure mapping to a text file for unorganized files.
         Preserves the full original directory structure in a concise format.
         
         Args:
@@ -602,7 +633,7 @@ class FileOrganizer:
                 self.logger.info(f"[DRY RUN] Would move: {move_plan['from']} -> {move_plan['to']}")
                 return True
             
-            # Track file mappings for unsorted files
+            # Track file mappings for unorganized files
             file_mappings = []
             
             # Move main file
@@ -610,8 +641,8 @@ class FileOrganizer:
                 if move_file_cross_device(move_plan['file'], move_plan['to']):
                     self.logger.info(f"Moved: {move_plan['from']} -> {move_plan['to']}")
                     
-                    # Track mapping for unsorted files
-                    if move_plan.get('media_type') == 'unsorted':
+                    # Track mapping for unorganized files (not recognized patterns)
+                    if not move_plan.get('is_recognized', True):
                         file_mappings.append({
                             'from': move_plan['from'],
                             'to': move_plan['to']
@@ -624,8 +655,8 @@ class FileOrganizer:
                 if move_file_cross_device(assoc['from'], assoc['to']):
                     self.logger.info(f"Moved associated: {assoc['from']} -> {assoc['to']}")
                     
-                    # Track mapping for associated files of unsorted main files
-                    if move_plan.get('media_type') == 'unsorted':
+                    # Track mapping for associated files of unorganized main files
+                    if not move_plan.get('is_recognized', True):
                         file_mappings.append({
                             'from': assoc['from'],
                             'to': assoc['to']
@@ -633,8 +664,8 @@ class FileOrganizer:
                 else:
                     raise Exception(f"Failed to move associated file: {assoc['from']}")
             
-            # Save original structure mapping for unsorted files
-            if file_mappings and move_plan.get('media_type') == 'unsorted':
+            # Save original structure mapping for unorganized files
+            if file_mappings and not move_plan.get('is_recognized', True):
                 self._save_original_structure(move_plan['target_dir'], file_mappings)
             
             return True

@@ -238,9 +238,8 @@ def remove_duplicates(ctx, directory, plan_file, dry_run):
 @click.option('--tv-shows-dir', type=click.Path(), help='Output directory for TV shows')
 @click.option('--music-dir', type=click.Path(), help='Output directory for music')
 @click.option('--photos-dir', type=click.Path(), help='Output directory for photos')
-@click.option('--unsorted-dir', type=click.Path(), help='Output directory for unsorted files')
 @click.pass_context
-def organize(ctx, directory, dry_run, output_dir, movies_dir, tv_shows_dir, music_dir, photos_dir, unsorted_dir):
+def organize(ctx, directory, dry_run, output_dir, movies_dir, tv_shows_dir, music_dir, photos_dir):
     """Organize and standardize file names and structure."""
     logger = ctx.obj['logger']
     config = ctx.obj['config']
@@ -259,7 +258,7 @@ def organize(ctx, directory, dry_run, output_dir, movies_dir, tv_shows_dir, musi
     organizer = FileOrganizer(config, logger)
     
     # Handle per-category output directories from CLI
-    if movies_dir or tv_shows_dir or music_dir or photos_dir or unsorted_dir:
+    if movies_dir or tv_shows_dir or music_dir or photos_dir:
         # Update config temporarily for this run
         output_dirs = config.get('organization.output_directories', {}).copy()
         if movies_dir:
@@ -270,8 +269,6 @@ def organize(ctx, directory, dry_run, output_dir, movies_dir, tv_shows_dir, musi
             output_dirs['music'] = music_dir
         if photos_dir:
             output_dirs['photos'] = photos_dir
-        if unsorted_dir:
-            output_dirs['unsorted'] = unsorted_dir
         config.set('organization.output_directories', output_dirs)
     
     # Set base output directory (if specified, overrides config)
@@ -348,7 +345,7 @@ def organize(ctx, directory, dry_run, output_dir, movies_dir, tv_shows_dir, musi
     
     if has_custom_dirs or output_dir:
         click.echo("\nOutput directories:")
-        for category in ['movies', 'tv_shows', 'music', 'photos', 'unsorted']:
+        for category in ['movies', 'tv_shows', 'music', 'photos']:
             cat_dir = output_dirs.get(category, '')
             if cat_dir and cat_dir.strip():
                 click.echo(f"  {category}: {Path(cat_dir).absolute()}")
@@ -383,7 +380,7 @@ def organize(ctx, directory, dry_run, output_dir, movies_dir, tv_shows_dir, musi
         if has_custom_dirs or output_dir:
             default_output = Path(config.get('organization.output_directory', 'organized_media'))
             click.echo("Organized into:")
-            for category in ['movies', 'tv_shows', 'music', 'photos', 'unsorted']:
+            for category in ['movies', 'tv_shows', 'music', 'photos']:
                 cat_dir = output_dirs.get(category, '')
                 if cat_dir and cat_dir.strip():
                     click.echo(f"  {category}: {Path(cat_dir).absolute()}")
