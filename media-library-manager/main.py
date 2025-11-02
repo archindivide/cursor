@@ -257,6 +257,22 @@ def organize(ctx, directory, dry_run, output_dir, movies_dir, tv_shows_dir, musi
     # Create organizer
     organizer = FileOrganizer(config, logger)
     
+    # Determine output directory
+    # If no output directory is specified and none in config, use input directory
+    input_directory = Path(directory)
+    default_config_output = config.get('organization.output_directory', 'organized_media')
+    
+    # Check if output directories are explicitly set
+    output_dirs = config.get('organization.output_directories', {})
+    has_explicit_output = any(cat_dir and cat_dir.strip() for cat_dir in output_dirs.values())
+    
+    # If no output_dir specified and no explicit output in config, use input directory
+    if not output_dir and default_config_output == 'organized_media' and not has_explicit_output:
+        # Use input directory as output
+        output_dir = str(input_directory)
+        config.set('organization.output_directory', output_dir)
+        logger.info(f"No output directory specified, organizing in place: {output_dir}")
+    
     # Handle per-category output directories from CLI
     if movies_dir or tv_shows_dir or music_dir or photos_dir:
         # Update config temporarily for this run
@@ -431,9 +447,14 @@ def organize(ctx, directory, dry_run, output_dir, movies_dir, tv_shows_dir, musi
         # Clean up empty directories (only if we actually moved files)
         if source_directories:
             click.echo("\nCleaning up empty directories...")
-            # Exclude output directories and input directory from cleanup
-            exclude_paths = list(target_base_dirs)
-            exclude_paths.append(input_directory)
+            # Exclude output directories but allow cleaning input directory
+            # Only exclude the specific output folders, not the input directory itself
+            exclude_paths = []
+            # Add category-specific output directories to exclude
+            for cat_dir in target_base_dirs:
+                if cat_dir.exists():
+                    exclude_paths.append(cat_dir)
+            
             removed_count = organizer._cleanup_empty_directories(
                 list(source_directories), 
                 recursive=True, 
@@ -442,16 +463,37 @@ def organize(ctx, directory, dry_run, output_dir, movies_dir, tv_shows_dir, musi
             if removed_count > 0:
                 click.echo(f"Removed {removed_count} empty directory(ies)")
             
-            # Also do a comprehensive scan of the input directory to find any remaining empty folders
-            # This helps when input == output
+            # Always do a comprehensive scan of the input directory to find any remaining empty folders
+            # This helps clean up after organizing, especially when input == output
             if input_directory.exists():
-                click.echo("Scanning for remaining empty directories...")
+                click.echo("Scanning input directory for remaining empty directories...")
+                # Exclude the actual output category folders, but allow cleaning the input directory structure
+                exclude_for_scan = []
+                default_output = Path(config.get('organization.output_directory', 'organized_media'))
+                
+                # Build list of category folders to exclude from cleanup
+                for category in ['movies', 'tv_shows', 'music', 'photos']:
+                    cat_dir = output_dirs.get(category, '')
+                    if cat_dir and cat_dir.strip():
+                        exclude_for_scan.append(Path(cat_dir))
+                    else:
+                        # Default output structure
+                        cat_folder = default_output / category
+                        if cat_folder.exists():
+                            exclude_for_scan.append(cat_folder)
+                
+                # Also exclude unorganized_files folders within categories
+                for exclude_path in exclude_for_scan[:]:  # Copy list
+                    unorganized_path = exclude_path / 'unorganized_files'
+                    if unorganized_path.exists():
+                        exclude_for_scan.append(unorganized_path)
+                
                 additional_removed = organizer._cleanup_empty_directories_in_directory(
                     input_directory, 
-                    exclude_paths=exclude_paths
+                    exclude_paths=exclude_for_scan
                 )
                 if additional_removed > 0:
-                    click.echo(f"Removed {additional_removed} additional empty directory(ies)")
+                    click.echo(f"Removed {additional_removed} additional empty directory(ies) from input directory")
         
         # Clean up output directory structure again after moves
         # This ensures any new junk files created during organization are cleaned up

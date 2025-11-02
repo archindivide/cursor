@@ -456,6 +456,82 @@ class FileOrganizer:
         
         new_path = target_dir / new_name
         
+        # Check if file is already in the correct location (normalize paths for comparison)
+        # If file is already organized correctly, mark as unchanged
+        try:
+            # Normalize both paths (resolve any symlinks, . and ..)
+            current_path_normalized = file_path.resolve()
+            new_path_normalized = new_path.resolve()
+            
+            # If paths are the same, file is already in correct location
+            if current_path_normalized == new_path_normalized:
+                return {
+                    'file': file_path,
+                    'from': file_path,
+                    'to': new_path,
+                    'associated': [],
+                    'changed': False,
+                    'media_type': media_type,
+                    'is_recognized': is_recognized,
+                    'target_dir': target_dir
+                }
+            
+            # Also check if file is already within the target directory structure
+            # This prevents re-organizing files that are already organized
+            try:
+                # Check if file is already in a category folder (movies/, tv_shows/, etc.)
+                current_parent = current_path_normalized.parent
+                target_category_dir = target_dir
+                
+                # If file is already in the target directory, check if it should stay
+                if current_parent == target_category_dir or target_category_dir in current_parent.parents:
+                    # File is already in the target category directory structure
+                    # Check if it should be in unorganized but is already in unorganized
+                    if not is_recognized and 'unorganized' in current_parent.parts:
+                        # File is already in unorganized folder
+                        # Only move if we need to change the filename or fix nested structure
+                        if current_path_normalized.name == new_name:
+                            # Already correctly placed in unorganized with correct name
+                            # Check if there's nested structure that shouldn't be there
+                            current_parts = current_parent.parts
+                            target_parts = target_category_dir.parts
+                            
+                            # Count unorganized in path - should only be once
+                            unorganized_count = sum(1 for p in current_parts if p.lower() == 'unorganized')
+                            if unorganized_count <= 1:
+                                # Already correctly organized
+                                return {
+                                    'file': file_path,
+                                    'from': file_path,
+                                    'to': new_path,
+                                    'associated': [],
+                                    'changed': False,
+                                    'media_type': media_type,
+                                    'is_recognized': is_recognized,
+                                    'target_dir': target_dir
+                                }
+                    elif is_recognized:
+                        # File is recognized and already in target directory
+                        # Check if filename matches
+                        if current_path_normalized.name == new_name:
+                            # Already correctly organized
+                            return {
+                                'file': file_path,
+                                'from': file_path,
+                                'to': new_path,
+                                'associated': [],
+                                'changed': False,
+                                'media_type': media_type,
+                                'is_recognized': is_recognized,
+                                'target_dir': target_dir
+                            }
+            except (ValueError, AttributeError):
+                # Can't determine relationship, continue with normal flow
+                pass
+        except (OSError, ValueError):
+            # If we can't resolve paths, continue with normal flow
+            pass
+        
         # Find associated files
         associated = self.find_associated_files(file_path)
         
@@ -501,16 +577,69 @@ class FileOrganizer:
         # This keeps files from the same source together
         try:
             # Get relative parts of the original path
-            # Try to preserve meaningful directory names (not too deep)
             source_parts = file_path.parent.parts
             
-            # Only preserve if there are meaningful directory names
-            # Skip very generic names like "Downloads", "Desktop", etc.
-            generic_names = {'downloads', 'desktop', 'documents', 'videos', 'pictures', 'music'}
+            # Get the output directory structure to avoid preserving it
+            output_dir = self.config.get('organization.output_directory', 'organized_media')
+            output_path = Path(output_dir)
+            
+            # Skip parts that match the output structure
+            # Also skip generic names and output structure names
+            generic_names = {'downloads', 'desktop', 'documents', 'videos', 'pictures', 'music', 'photos'}
+            output_structure_names = {
+                'organized_media', 'organized.media',
+                'movies', 'tv_shows', 'tv.shows', 'tv_shows',
+                'unorganized', 'unorganized_files',
+                'organized_files'
+            }
+            
+            # Normalize base_path for comparison
+            base_parts_lower = {bp.lower() for bp in base_path.parts}
+            output_parts_lower = {op.lower() for op in output_path.parts}
+            
+            # Check if file is already within the output directory structure
+            # If so, don't preserve structure (would create nested directories)
+            try:
+                file_path_normalized = file_path.resolve()
+                output_path_normalized = output_path.resolve()
+                
+                # If file is already within output directory, don't preserve structure
+                try:
+                    relative_to_output = file_path_normalized.relative_to(output_path_normalized)
+                    # File is in output directory - check if it's in an organized structure
+                    relative_parts = relative_to_output.parts
+                    if len(relative_parts) > 0:
+                        # If file is in movies/, tv_shows/, etc., don't preserve structure
+                        if relative_parts[0] in ['movies', 'tv_shows', 'music', 'photos']:
+                            # Already in organized structure, just use simple unorganized path
+                            return base_path / media_type / 'unorganized'
+                except ValueError:
+                    # File is not within output directory, can preserve structure
+                    pass
+            except (OSError, ValueError):
+                # Can't determine, continue with preservation logic
+                pass
             
             preserved_parts = []
             for part in reversed(source_parts[-3:]):  # Take last 3 levels
-                if part.lower() not in generic_names and len(part) > 2:
+                part_lower = part.lower()
+                
+                # Skip if it's a generic name
+                if part_lower in generic_names:
+                    break
+                
+                # Skip if it matches output structure
+                if (part_lower in output_structure_names or 
+                    part_lower in base_parts_lower or 
+                    part_lower in output_parts_lower):
+                    continue
+                
+                # Skip if it's already part of the base path structure
+                if part_lower in base_parts_lower:
+                    continue
+                
+                # Only preserve meaningful directory names
+                if len(part) > 2:
                     preserved_parts.insert(0, part)
                 else:
                     break
@@ -593,12 +722,18 @@ class FileOrganizer:
                     if is_category_specific:
                         # Already at category-specific path, just add unorganized
                         new_path = new_path / 'unorganized'
-                        # Try to preserve structure from file_path
+                        # Try to preserve structure from file_path, but skip output structure names
                         try:
                             source_parts = file_path.parent.parts[-2:]  # Last 2 levels
+                            output_structure = {base_path.name.lower(), media_type, 'unorganized', 'unorganized_files'}
+                            
                             if source_parts:
                                 for part in source_parts:
-                                    if len(part) > 2 and part.lower() not in {'downloads', 'desktop', 'videos'}:
+                                    part_lower = part.lower()
+                                    # Skip if it matches output structure
+                                    if (len(part) > 2 and 
+                                        part_lower not in {'downloads', 'desktop', 'videos', 'movies', 'tv_shows', 'music', 'photos', 'organized_media', 'organized.media', 'unorganized', 'unorganized_files'} and
+                                        part_lower not in output_structure):
                                         sanitized = self.sanitize_filename(part).replace(' ', '.')
                                         new_path = new_path / sanitized
                         except Exception:
@@ -636,9 +771,14 @@ class FileOrganizer:
                         new_path = new_path / 'unorganized'
                         try:
                             source_parts = file_path.parent.parts[-2:]
+                            output_structure = {base_path.name.lower(), media_type, 'unorganized', 'unorganized_files'}
+                            
                             if source_parts:
                                 for part in source_parts:
-                                    if len(part) > 2 and part.lower() not in {'downloads', 'desktop', 'videos'}:
+                                    part_lower = part.lower()
+                                    if (len(part) > 2 and 
+                                        part_lower not in {'downloads', 'desktop', 'videos', 'tv_shows', 'music', 'photos', 'organized_media', 'organized.media', 'unorganized', 'unorganized_files'} and
+                                        part_lower not in output_structure):
                                         sanitized = self.sanitize_filename(part).replace(' ', '.')
                                         new_path = new_path / sanitized
                         except Exception:
@@ -667,9 +807,14 @@ class FileOrganizer:
                         new_path = new_path / 'unorganized'
                         try:
                             source_parts = file_path.parent.parts[-2:]
+                            output_structure = {base_path.name.lower(), media_type, 'unorganized', 'unorganized_files'}
+                            
                             if source_parts:
                                 for part in source_parts:
-                                    if len(part) > 2 and part.lower() not in {'downloads', 'desktop', 'music'}:
+                                    part_lower = part.lower()
+                                    if (len(part) > 2 and 
+                                        part_lower not in {'downloads', 'desktop', 'music', 'movies', 'tv_shows', 'photos', 'organized_media', 'organized.media', 'unorganized', 'unorganized_files'} and
+                                        part_lower not in output_structure):
                                         sanitized = self.sanitize_filename(part).replace(' ', '.')
                                         new_path = new_path / sanitized
                         except Exception:
@@ -698,9 +843,14 @@ class FileOrganizer:
                         new_path = new_path / 'unorganized'
                         try:
                             source_parts = file_path.parent.parts[-2:]
+                            output_structure = {base_path.name.lower(), media_type, 'unorganized', 'unorganized_files'}
+                            
                             if source_parts:
                                 for part in source_parts:
-                                    if len(part) > 2 and part.lower() not in {'downloads', 'desktop', 'pictures', 'photos'}:
+                                    part_lower = part.lower()
+                                    if (len(part) > 2 and 
+                                        part_lower not in {'downloads', 'desktop', 'pictures', 'photos', 'movies', 'tv_shows', 'music', 'organized_media', 'organized.media', 'unorganized', 'unorganized_files'} and
+                                        part_lower not in output_structure):
                                         sanitized = self.sanitize_filename(part).replace(' ', '.')
                                         new_path = new_path / sanitized
                         except Exception:
