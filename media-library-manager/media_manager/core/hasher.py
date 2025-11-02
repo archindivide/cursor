@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 from typing import Dict, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from tqdm import tqdm
 
 from ..utils.file_utils import get_file_hash, get_file_size
 
@@ -37,12 +38,13 @@ class FileHasher:
         """
         return get_file_hash(file_path, self.algorithm, self.chunk_size)
     
-    def hash_files(self, file_paths: list) -> Dict[Path, str]:
+    def hash_files(self, file_paths: list, progress_bar: Optional[tqdm] = None) -> Dict[Path, str]:
         """
         Calculate hashes for multiple files in parallel.
         
         Args:
             file_paths: List of file paths
+            progress_bar: Optional progress bar to update
         
         Returns:
             Dictionary mapping file path to hash
@@ -63,23 +65,31 @@ class FileHasher:
                     hash_value = future.result()
                     if hash_value:
                         hash_map[file_path] = hash_value
+                    
+                    # Update progress bar
+                    if progress_bar:
+                        progress_bar.set_description(f"Hashing: {file_path.name[:40]}")
+                        progress_bar.update(1)
                 except Exception as e:
                     self.logger.error(f"Error hashing {file_path}: {e}")
+                    if progress_bar:
+                        progress_bar.update(1)
         
         return hash_map
     
-    def find_hash_duplicates(self, files: list) -> Dict[str, list]:
+    def find_hash_duplicates(self, files: list, progress_bar: Optional[tqdm] = None) -> Dict[str, list]:
         """
         Find duplicate files based on hash.
         
         Args:
             files: List of file paths
+            progress_bar: Optional progress bar to update
         
         Returns:
             Dictionary mapping hash to list of duplicate file paths
         """
         self.logger.info(f"Hashing {len(files)} files for duplicate detection...")
-        hash_map = self.hash_files(files)
+        hash_map = self.hash_files(files, progress_bar)
         
         # Group files by hash
         hash_to_files = {}

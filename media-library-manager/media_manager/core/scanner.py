@@ -2,8 +2,9 @@
 
 import logging
 from pathlib import Path
-from typing import List, Set, Dict
+from typing import List, Set, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from tqdm import tqdm
 
 from ..utils.file_utils import is_media_file, get_file_extension
 
@@ -24,12 +25,13 @@ class MediaScanner:
         self.extensions = config.get_all_extensions()
         self.ignore_patterns = config.get('advanced.ignore_patterns', [])
     
-    def scan_directory(self, directory: str) -> List[Path]:
+    def scan_directory(self, directory: str, progress_bar: Optional[tqdm] = None) -> List[Path]:
         """
         Scan directory for media files.
         
         Args:
             directory: Directory path to scan
+            progress_bar: Optional progress bar to update
         
         Returns:
             List of media file paths
@@ -44,7 +46,14 @@ class MediaScanner:
         self.logger.info(f"Scanning directory: {directory}")
         
         try:
-            for file_path in directory_path.rglob('*'):
+            # First, collect all files for progress tracking
+            all_files = list(directory_path.rglob('*'))
+            
+            for file_path in all_files:
+                if progress_bar:
+                    progress_bar.set_description(f"Scanning: {file_path.name[:40]}")
+                    progress_bar.update(1)
+                
                 if not file_path.is_file():
                     continue
                 
@@ -55,9 +64,14 @@ class MediaScanner:
                 # Check if file is a supported media file
                 if is_media_file(file_path, self.extensions):
                     media_files.append(file_path)
+            
+            if progress_bar:
+                progress_bar.close()
         
         except (OSError, PermissionError) as e:
             self.logger.error(f"Error scanning {directory}: {e}")
+            if progress_bar:
+                progress_bar.close()
         
         self.logger.info(f"Found {len(media_files)} media files in {directory}")
         return media_files
