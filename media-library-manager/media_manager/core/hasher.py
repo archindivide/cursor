@@ -107,6 +107,54 @@ class FileHasher:
         self.logger.info(f"Found {len(duplicates)} groups of duplicate files")
         return duplicates
     
+    def find_quick_duplicates(self, files: list, progress_bar: Optional[tqdm] = None) -> Dict[str, list]:
+        """
+        Find duplicate files based on filename and size (quick mode, no hashing).
+        
+        Args:
+            files: List of file paths
+            progress_bar: Optional progress bar to update
+        
+        Returns:
+            Dictionary mapping signature (name+size) to list of duplicate file paths
+        """
+        self.logger.info(f"Quick duplicate detection for {len(files)} files (using filename and size)...")
+        
+        # Group files by normalized name and size
+        signature_to_files = {}
+        
+        for file_path in files:
+            try:
+                # Get normalized filename (lowercase, without path)
+                filename = file_path.name.lower()
+                size = get_file_size(file_path)
+                
+                # Create signature: filename + size
+                signature = f"{filename}:{size}"
+                
+                if signature not in signature_to_files:
+                    signature_to_files[signature] = []
+                signature_to_files[signature].append(file_path)
+                
+                # Update progress bar
+                if progress_bar is not None:
+                    progress_bar.set_description(f"Checking: {file_path.name[:40]}")
+                    progress_bar.update(1)
+                    
+            except (OSError, IOError) as e:
+                self.logger.error(f"Error getting file info for {file_path}: {e}")
+                if progress_bar is not None:
+                    progress_bar.update(1)
+        
+        # Find duplicates (signatures with multiple files)
+        duplicates = {
+            signature: file_list for signature, file_list in signature_to_files.items()
+            if len(file_list) > 1
+        }
+        
+        self.logger.info(f"Found {len(duplicates)} groups of potential duplicates (quick mode)")
+        return duplicates
+    
     def get_file_signature(self, file_path: Path) -> Dict:
         """
         Get file signature (hash + metadata).

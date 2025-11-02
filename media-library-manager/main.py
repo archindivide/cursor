@@ -64,14 +64,16 @@ def scan(ctx, directory):
 
 @cli.command()
 @click.argument('directory', type=click.Path(exists=True))
+@click.option('--quick', is_flag=True, help='Quick mode: use filename and size instead of hashing (faster but less accurate)')
 @click.option('--save-plan', type=click.Path(), help='Save detection results to a plan file for later use')
 @click.pass_context
-def detect_duplicates(ctx, directory, save_plan):
+def detect_duplicates(ctx, directory, quick, save_plan):
     """Detect duplicate files in directory."""
     logger = ctx.obj['logger']
     config = ctx.obj['config']
     
-    logger.info(f"Scanning for duplicates in: {directory}")
+    mode = "quick (filename + size)" if quick else "hash-based"
+    logger.info(f"Scanning for duplicates in: {directory} (mode: {mode})")
     
     # Scan for media files
     scanner = MediaScanner(config, logger)
@@ -83,7 +85,11 @@ def detect_duplicates(ctx, directory, save_plan):
     
     # Find duplicates with progress bar
     hasher = FileHasher(config, logger)
-    duplicates = hasher.find_hash_duplicates(files, progress_bar=tqdm(total=len(files), desc="Hashing files", unit="file", ncols=100))
+    if quick:
+        duplicates = hasher.find_quick_duplicates(files, progress_bar=tqdm(total=len(files), desc="Checking files", unit="file", ncols=100))
+        click.echo("\n[WARNING] Quick mode: Detection based on filename and size only (may have false positives)")
+    else:
+        duplicates = hasher.find_hash_duplicates(files, progress_bar=tqdm(total=len(files), desc="Hashing files", unit="file", ncols=100))
     
     if not duplicates:
         click.echo("\nNo duplicates found!")
