@@ -51,10 +51,9 @@ organization:
     tv_shows: ""  # Leave empty to use output_directory/tv_shows
     music: ""  # Leave empty to use output_directory/music
     photos: ""  # Leave empty to use output_directory/photos
-    unsorted: ""  # Leave empty to use output_directory/unsorted
   preserve_subtitles: true
   preserve_torrents: true
-  # Files not matching movie/TV patterns go to unsorted/ folder
+  # Files not matching patterns go to unorganized/ subfolder under their media type
 
 # NFO file generation
 nfo:

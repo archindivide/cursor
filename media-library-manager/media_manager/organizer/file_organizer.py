@@ -229,13 +229,6 @@ class FileOrganizer:
         
         extension = get_file_extension(file_path)
         
-        # For unsorted files, just sanitize the original name
-        if media_type == 'unsorted':
-            new_name = self.sanitize_filename(file_path.stem)
-            new_name = re.sub(r'\s+', '.', new_name)
-            new_name = clean_filename(new_name)
-            return new_name + extension
-        
         # Get configuration
         naming_pattern = self.config.get('organization.naming_pattern', '{title} ({year}) [{resolution}]')
         
@@ -245,7 +238,14 @@ class FileOrganizer:
         # Title - replace spaces with dots
         title = pattern_info.get('title', '')
         if not title:
-            title = file_path.stem
+            # For unorganized files without a recognized title, use original stem (sanitized)
+            title = self.sanitize_filename(file_path.stem)
+            title = re.sub(r'\s+', '.', title)
+            components.append(title)
+            # Join with dots and clean
+            new_name = '.'.join(components) if components else file_path.stem
+            new_name = clean_filename(new_name)
+            return new_name + extension
         
         # Clean title and replace spaces with dots
         title = self.sanitize_filename(title)

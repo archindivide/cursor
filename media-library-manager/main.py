@@ -283,7 +283,7 @@ def organize(ctx, directory, dry_run, output_dir, movies_dir, tv_shows_dir, musi
         default_output = Path(config.get('organization.output_directory', 'organized_media'))
         
         click.echo("Output directories:")
-        for category in ['movies', 'tv_shows', 'music', 'photos', 'unsorted']:
+        for category in ['movies', 'tv_shows', 'music', 'photos']:
             cat_dir = output_dirs.get(category, '')
             if cat_dir and cat_dir.strip():
                 click.echo(f"  {category}: {Path(cat_dir).absolute()}")
