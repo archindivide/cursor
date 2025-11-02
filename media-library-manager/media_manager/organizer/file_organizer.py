@@ -447,11 +447,14 @@ class FileOrganizer:
         associated = self.find_associated_files(file_path)
         
         # Plan associated file moves
+        # Keep original filenames for associated files (don't rename them)
         associated_moves = []
         for assoc_file in associated:
-            assoc_ext = get_file_extension(assoc_file)
-            assoc_new_name = new_path.stem + assoc_ext
-            assoc_new_path = target_dir / assoc_new_name
+            # Keep the original filename, just sanitize problematic characters
+            original_name = assoc_file.name
+            # Only sanitize invalid characters, don't change the name structure
+            sanitized_name = clean_filename(original_name)
+            assoc_new_path = target_dir / sanitized_name
             associated_moves.append({
                 'from': assoc_file,
                 'to': assoc_new_path
@@ -534,6 +537,61 @@ class FileOrganizer:
         
         return new_path
     
+    def _save_original_structure(self, target_dir: Path, file_mappings: List[Dict[str, Path]]) -> None:
+        """
+        Save original file structure mapping to a text file for unsorted files.
+        Preserves the full original directory structure.
+        
+        Args:
+            target_dir: Target directory where files are being moved
+            file_mappings: List of dictionaries with 'from' and 'to' keys
+        """
+        try:
+            mapping_file = target_dir / "original_structure.txt"
+            
+            # Check if file exists to determine if we need a header
+            file_exists = mapping_file.exists()
+            
+            # Append new mappings
+            with open(mapping_file, 'a', encoding='utf-8') as f:
+                # Add timestamp header if file is new
+                if not file_exists:
+                    f.write(f"Original File Structure Mapping\n")
+                    f.write(f"Generated: {datetime.now().isoformat()}\n")
+                    f.write(f"{'='*80}\n\n")
+                    f.write("This file records the original location of unsorted files.\n")
+                    f.write("Format: Original path -> New location\n\n")
+                
+                # Group by original directory structure
+                from collections import defaultdict
+                by_directory = defaultdict(list)
+                
+                for mapping in file_mappings:
+                    original_path = mapping['from']
+                    new_path = mapping['to']
+                    original_dir = original_path.parent
+                    by_directory[original_dir].append((original_path, new_path))
+                
+                # Write grouped by directory structure
+                for original_dir in sorted(by_directory.keys()):
+                    f.write(f"\nOriginal Directory: {original_dir}\n")
+                    f.write(f"{'-'*80}\n")
+                    
+                    for original_path, new_path in sorted(by_directory[original_dir]):
+                        # Show relative path from original directory
+                        relative_path = original_path.relative_to(original_dir)
+                        f.write(f"  {relative_path}\n")
+                        f.write(f"    -> {new_path}\n")
+                    
+                    f.write(f"{'-'*80}\n")
+                
+                f.write("\n")
+            
+            self.logger.info(f"Saved original structure mapping to: {mapping_file}")
+            
+        except Exception as e:
+            self.logger.error(f"Error saving original structure mapping: {e}")
+    
     def execute_move(self, move_plan: Dict, dry_run: bool = False) -> bool:
         """
         Execute a planned file move.
@@ -550,17 +608,38 @@ class FileOrganizer:
                 self.logger.info(f"[DRY RUN] Would move: {move_plan['from']} -> {move_plan['to']}")
                 return True
             
+            # Track file mappings for unsorted files
+            file_mappings = []
+            
             # Move main file
             if move_plan['changed']:
                 move_plan['to'].parent.mkdir(parents=True, exist_ok=True)
                 move_plan['file'].rename(move_plan['to'])
                 self.logger.info(f"Moved: {move_plan['from']} -> {move_plan['to']}")
+                
+                # Track mapping for unsorted files
+                if move_plan.get('media_type') == 'unsorted':
+                    file_mappings.append({
+                        'from': move_plan['from'],
+                        'to': move_plan['to']
+                    })
             
             # Move associated files
             for assoc in move_plan['associated']:
                 assoc['to'].parent.mkdir(parents=True, exist_ok=True)
                 assoc['from'].rename(assoc['to'])
                 self.logger.info(f"Moved associated: {assoc['from']} -> {assoc['to']}")
+                
+                # Track mapping for associated files of unsorted main files
+                if move_plan.get('media_type') == 'unsorted':
+                    file_mappings.append({
+                        'from': assoc['from'],
+                        'to': assoc['to']
+                    })
+            
+            # Save original structure mapping for unsorted files
+            if file_mappings and move_plan.get('media_type') == 'unsorted':
+                self._save_original_structure(move_plan['target_dir'], file_mappings)
             
             return True
             
