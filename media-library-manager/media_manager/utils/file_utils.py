@@ -105,3 +105,46 @@ def get_file_mtime(file_path: Path) -> float:
         return file_path.stat().st_mtime
     except (OSError, IOError):
         return 0
+
+
+def move_file_cross_device(source: Path, destination: Path) -> bool:
+    """
+    Move a file, handling cross-device moves safely.
+    
+    On Linux/Unix, rename() only works within the same filesystem.
+    For cross-device moves, this function copies then deletes the original.
+    
+    Args:
+        source: Source file path
+        destination: Destination file path
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        # Ensure destination directory exists
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Try rename first (fast for same filesystem)
+        try:
+            source.rename(destination)
+            return True
+        except OSError as e:
+            # If rename fails with cross-device error, use copy+delete
+            if e.errno == 18:  # Invalid cross-device link (Errno 18)
+                # Copy file
+                import shutil
+                shutil.copy2(source, destination)
+                
+                # Delete original after successful copy
+                source.unlink()
+                return True
+            else:
+                # Re-raise if it's a different error
+                raise
+    
+    except Exception as e:
+        # Log the error but return False
+        import sys
+        print(f"Error moving file {source} to {destination}: {e}", file=sys.stderr)
+        return False

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime
 
-from ..utils.file_utils import clean_filename, get_file_extension, get_file_mtime, get_file_size
+from ..utils.file_utils import clean_filename, get_file_extension, get_file_mtime, get_file_size, move_file_cross_device
 
 
 class FileOrganizer:
@@ -607,29 +607,31 @@ class FileOrganizer:
             
             # Move main file
             if move_plan['changed']:
-                move_plan['to'].parent.mkdir(parents=True, exist_ok=True)
-                move_plan['file'].rename(move_plan['to'])
-                self.logger.info(f"Moved: {move_plan['from']} -> {move_plan['to']}")
-                
-                # Track mapping for unsorted files
-                if move_plan.get('media_type') == 'unsorted':
-                    file_mappings.append({
-                        'from': move_plan['from'],
-                        'to': move_plan['to']
-                    })
+                if move_file_cross_device(move_plan['file'], move_plan['to']):
+                    self.logger.info(f"Moved: {move_plan['from']} -> {move_plan['to']}")
+                    
+                    # Track mapping for unsorted files
+                    if move_plan.get('media_type') == 'unsorted':
+                        file_mappings.append({
+                            'from': move_plan['from'],
+                            'to': move_plan['to']
+                        })
+                else:
+                    raise Exception(f"Failed to move file: {move_plan['from']}")
             
             # Move associated files
             for assoc in move_plan['associated']:
-                assoc['to'].parent.mkdir(parents=True, exist_ok=True)
-                assoc['from'].rename(assoc['to'])
-                self.logger.info(f"Moved associated: {assoc['from']} -> {assoc['to']}")
-                
-                # Track mapping for associated files of unsorted main files
-                if move_plan.get('media_type') == 'unsorted':
-                    file_mappings.append({
-                        'from': assoc['from'],
-                        'to': assoc['to']
-                    })
+                if move_file_cross_device(assoc['from'], assoc['to']):
+                    self.logger.info(f"Moved associated: {assoc['from']} -> {assoc['to']}")
+                    
+                    # Track mapping for associated files of unsorted main files
+                    if move_plan.get('media_type') == 'unsorted':
+                        file_mappings.append({
+                            'from': assoc['from'],
+                            'to': assoc['to']
+                        })
+                else:
+                    raise Exception(f"Failed to move associated file: {assoc['from']}")
             
             # Save original structure mapping for unsorted files
             if file_mappings and move_plan.get('media_type') == 'unsorted':
