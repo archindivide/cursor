@@ -7,23 +7,26 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
 from ..utils.file_utils import is_media_file, get_file_extension
+from ..database import MediaDatabase
 
 
 class MediaScanner:
     """Scanner for discovering media files in directories."""
     
-    def __init__(self, config, logger=None):
+    def __init__(self, config, logger=None, database: MediaDatabase = None):
         """
         Initialize media scanner.
         
         Args:
             config: Configuration object
             logger: Logger instance
+            database: Optional database instance for tracking files
         """
         self.config = config
         self.logger = logger or logging.getLogger(__name__)
         self.extensions = config.get_all_extensions()
         self.ignore_patterns = config.get('advanced.ignore_patterns', [])
+        self.database = database
     
     def scan_directory(self, directory: str, progress_bar: Optional[tqdm] = None) -> List[Path]:
         """
@@ -68,6 +71,19 @@ class MediaScanner:
                 # Check if file is a supported media file
                 if is_media_file(file_path, self.extensions):
                     media_files.append(file_path)
+                    
+                    # Track file in database if available
+                    if self.database:
+                        try:
+                            media_type = self._detect_media_type(file_path)
+                            # Use default directory_id if scanning from a known directory
+                            self.database.add_file(
+                                file_path,
+                                media_type=media_type,
+                                directory_id=None  # Will be set during organization if needed
+                            )
+                        except Exception as e:
+                            self.logger.debug(f"Error tracking file in database: {e}")
             
             if progress_bar is not None:
                 progress_bar.close()

@@ -61,6 +61,11 @@ nfo:
   overwrite_existing: false
   format: "kodi"  # kodi, plex
   include_artwork: true
+
+# Database configuration
+database:
+  path: "media_library.db"  # Path to SQLite database file (relative to project root)
+  enabled: true  # Enable database tracking
   artwork_location: "posters"
 
 # Logging

@@ -13,6 +13,7 @@ from media_manager.core.duplicate_finder import DuplicateFinder
 from media_manager.organizer.file_organizer import FileOrganizer
 from media_manager.utils.file_utils import format_file_size
 from media_manager.utils.plan_manager import PlanManager
+from media_manager.database import MediaDatabase
 
 
 @click.group()
@@ -37,6 +38,10 @@ def cli(ctx, config, log_level):
         log_file=log_config.get('file'),
         console=log_config.get('console', True)
     )
+    
+    # Initialize database
+    db_path = ctx.obj['config'].get('database.path', 'media_library.db')
+    ctx.obj['database'] = MediaDatabase(db_path=db_path, logger=ctx.obj['logger'])
 
 
 @cli.command()
@@ -49,8 +54,18 @@ def scan(ctx, directory):
     
     logger.info(f"Scanning directory: {directory}")
     
-    scanner = MediaScanner(config, logger)
+    database = ctx.obj.get('database')
+    scanner = MediaScanner(config, logger, database=database)
     files = scanner.scan_directory(directory, progress_bar=tqdm(desc="Scanning files", unit="file", ncols=100))
+    
+    # Update directory scan time in database if available
+    if database:
+        try:
+            directory_id = database.get_directory(path=directory)
+            if directory_id:
+                database.update_directory_scan_time(directory_id['id'])
+        except Exception as e:
+            logger.debug(f"Error updating directory scan time: {e}")
     
     click.echo(f"\nFound {len(files)} media files")
     
@@ -76,7 +91,8 @@ def detect_duplicates(ctx, directory, quick, save_plan):
     logger.info(f"Scanning for duplicates in: {directory} (mode: {mode})")
     
     # Scan for media files
-    scanner = MediaScanner(config, logger)
+    database = ctx.obj.get('database')
+    scanner = MediaScanner(config, logger, database=database)
     files = scanner.scan_directory(directory, progress_bar=tqdm(desc="Scanning files", unit="file", ncols=100))
     
     if not files:
@@ -161,7 +177,8 @@ def remove_duplicates(ctx, directory, plan_file, dry_run):
         logger.info(f"Scanning for duplicates in: {directory}")
         
         # Find duplicates with progress bars
-        scanner = MediaScanner(config, logger)
+        database = ctx.obj.get('database')
+        scanner = MediaScanner(config, logger, database=database)
         files = scanner.scan_directory(directory, progress_bar=tqdm(desc="Scanning files", unit="file", ncols=100))
         
         hasher = FileHasher(config, logger)
@@ -247,7 +264,8 @@ def organize(ctx, directory, dry_run, output_dir, movies_dir, tv_shows_dir, musi
     logger.info(f"Organizing files in: {directory}")
     
     # Scan for media files with progress bar
-    scanner = MediaScanner(config, logger)
+    database = ctx.obj.get('database')
+    scanner = MediaScanner(config, logger, database=database)
     files = scanner.scan_directory(directory, progress_bar=tqdm(desc="Scanning files", unit="file", ncols=100))
     
     if not files:
@@ -255,7 +273,7 @@ def organize(ctx, directory, dry_run, output_dir, movies_dir, tv_shows_dir, musi
         return
     
     # Create organizer
-    organizer = FileOrganizer(config, logger)
+    organizer = FileOrganizer(config, logger, database=database)
     
     # Determine output directory
     # If no output directory is specified and none in config, use input directory
@@ -554,6 +572,251 @@ def info(ctx):
         click.echo(f"  {media_type}: {path_list if path_list else '(not configured)'}")
     
     click.echo(f"\nSupported Extensions: {len(config.get_all_extensions())}")
+
+
+@cli.group()
+@click.pass_context
+def db(ctx):
+    """Database management commands."""
+    pass
+
+
+@db.command('add-input')
+@click.argument('directory', type=click.Path(exists=True))
+@click.option('--media-type', type=click.Choice(['movies', 'tv_shows', 'music', 'photos']), 
+              help='Media type for this input directory')
+@click.option('--notes', help='Optional notes about this directory')
+@click.pass_context
+def add_input_directory(ctx, directory, media_type, notes):
+    """Add an input directory to track."""
+    database = ctx.obj.get('database')
+    if not database:
+        click.echo("Error: Database not initialized", err=True)
+        return
+    
+    try:
+        directory_id = database.add_directory(
+            directory,
+            'input',
+            media_type=media_type,
+            enabled=True,
+            notes=notes
+        )
+        click.echo(f"Added input directory: {directory} (ID: {directory_id})")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+
+
+@db.command('add-output')
+@click.argument('directory', type=click.Path())
+@click.option('--media-type', type=click.Choice(['movies', 'tv_shows', 'music', 'photos']), 
+              help='Media type for this output directory')
+@click.option('--notes', help='Optional notes about this directory')
+@click.pass_context
+def add_output_directory(ctx, directory, media_type, notes):
+    """Add an output directory to track."""
+    database = ctx.obj.get('database')
+    if not database:
+        click.echo("Error: Database not initialized", err=True)
+        return
+    
+    try:
+        # Create directory if it doesn't exist
+        Path(directory).mkdir(parents=True, exist_ok=True)
+        
+        directory_id = database.add_directory(
+            directory,
+            'output',
+            media_type=media_type,
+            enabled=True,
+            notes=notes
+        )
+        click.echo(f"Added output directory: {directory} (ID: {directory_id})")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+
+
+@db.command('list-directories')
+@click.option('--type', 'directory_type', type=click.Choice(['input', 'output']),
+              help='Filter by directory type')
+@click.option('--enabled/--disabled', default=None, help='Filter by enabled status')
+@click.pass_context
+def list_directories(ctx, directory_type, enabled):
+    """List tracked directories."""
+    database = ctx.obj.get('database')
+    if not database:
+        click.echo("Error: Database not initialized", err=True)
+        return
+    
+    try:
+        directories = database.list_directories(directory_type=directory_type, enabled=enabled)
+        
+        if not directories:
+            click.echo("No directories found.")
+            return
+        
+        click.echo("\nTracked Directories:")
+        click.echo(f"{'ID':<5} {'Type':<8} {'Media Type':<12} {'Path':<50} {'Last Scanned':<20}")
+        click.echo("-" * 100)
+        
+        for dir_info in directories:
+            last_scanned = dir_info.get('last_scanned_at', 'Never')
+            if last_scanned:
+                try:
+                    from datetime import datetime
+                    if isinstance(last_scanned, str):
+                        dt = datetime.fromisoformat(last_scanned.replace('Z', '+00:00'))
+                        last_scanned = dt.strftime('%Y-%m-%d %H:%M:%S')
+                except:
+                    pass
+            
+            click.echo(f"{dir_info['id']:<5} {dir_info['directory_type']:<8} "
+                      f"{dir_info.get('media_type', 'N/A'):<12} "
+                      f"{dir_info['path']:<50} {last_scanned:<20}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+
+
+@db.command('list-files')
+@click.option('--media-type', type=click.Choice(['movies', 'tv_shows', 'music', 'photos']),
+              help='Filter by media type')
+@click.option('--recognized/--unrecognized', 'recognized', default=None,
+              help='Filter by recognition status')
+@click.option('--limit', default=50, help='Maximum number of files to show')
+@click.pass_context
+def list_files(ctx, media_type, recognized, limit):
+    """List tracked files."""
+    database = ctx.obj.get('database')
+    if not database:
+        click.echo("Error: Database not initialized", err=True)
+        return
+    
+    try:
+        is_recognized = recognized if recognized is not None else None
+        files = database.list_files(
+            media_type=media_type,
+            is_recognized=is_recognized,
+            limit=limit
+        )
+        
+        if not files:
+            click.echo("No files found.")
+            return
+        
+        click.echo(f"\nTracked Files (showing {len(files)} of up to {limit}):")
+        click.echo(f"{'ID':<5} {'Type':<10} {'Recognized':<11} {'Title':<30} {'Path':<50}")
+        click.echo("-" * 110)
+        
+        for file_info in files:
+            title = file_info.get('title') or file_info.get('filename', 'N/A')
+            if len(title) > 28:
+                title = title[:25] + "..."
+            
+            click.echo(f"{file_info['id']:<5} "
+                      f"{file_info.get('media_type', 'unknown'):<10} "
+                      f"{'Yes' if file_info.get('is_recognized') else 'No':<11} "
+                      f"{title:<30} "
+                      f"{file_info['current_path'][:48]:<50}")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+
+
+@db.command('stats')
+@click.pass_context
+def database_stats(ctx):
+    """Show database statistics."""
+    database = ctx.obj.get('database')
+    if not database:
+        click.echo("Error: Database not initialized", err=True)
+        return
+    
+    try:
+        stats = database.get_statistics()
+        
+        click.echo("\nDatabase Statistics:")
+        click.echo("=" * 60)
+        
+        click.echo(f"\nFiles:")
+        click.echo(f"  Total: {stats.get('total_files', 0)}")
+        
+        if stats.get('files_by_type'):
+            click.echo(f"  By Type:")
+            for media_type, count in stats['files_by_type'].items():
+                click.echo(f"    {media_type}: {count}")
+        
+        if stats.get('recognition'):
+            click.echo(f"  Recognition:")
+            for status, count in stats['recognition'].items():
+                click.echo(f"    {status}: {count}")
+        
+        if stats.get('total_size', 0) > 0:
+            total_size = stats['total_size']
+            click.echo(f"  Total Size: {format_file_size(total_size)}")
+        
+        click.echo(f"\nDirectories:")
+        click.echo(f"  Total: {stats.get('total_directories', 0)}")
+        
+        if stats.get('directories_by_type'):
+            click.echo(f"  By Type:")
+            for dir_type, count in stats['directories_by_type'].items():
+                click.echo(f"    {dir_type}: {count}")
+        
+        click.echo("=" * 60)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+
+
+@db.command('file-info')
+@click.argument('file_id', type=int)
+@click.pass_context
+def file_info(ctx, file_id):
+    """Show detailed information about a file."""
+    database = ctx.obj.get('database')
+    if not database:
+        click.echo("Error: Database not initialized", err=True)
+        return
+    
+    try:
+        file_info = database.get_file(file_id=file_id)
+        if not file_info:
+            click.echo(f"File ID {file_id} not found.")
+            return
+        
+        click.echo(f"\nFile Information (ID: {file_id}):")
+        click.echo("=" * 60)
+        click.echo(f"Filename: {file_info['filename']}")
+        click.echo(f"Current Path: {file_info['current_path']}")
+        click.echo(f"Original Path: {file_info['original_path']}")
+        click.echo(f"Media Type: {file_info.get('media_type', 'N/A')}")
+        click.echo(f"Recognized: {'Yes' if file_info.get('is_recognized') else 'No'}")
+        
+        if file_info.get('title'):
+            click.echo(f"Title: {file_info['title']}")
+        if file_info.get('year'):
+            click.echo(f"Year: {file_info['year']}")
+        if file_info.get('season') and file_info.get('episode'):
+            click.echo(f"Season: {file_info['season']}, Episode: {file_info['episode']}")
+        
+        if file_info.get('file_size'):
+            click.echo(f"Size: {format_file_size(file_info['file_size'])}")
+        
+        # Show movement history
+        movements = database.get_file_movements(file_id)
+        if movements:
+            click.echo(f"\nMovement History ({len(movements)} moves):")
+            for movement in movements[:5]:  # Show last 5
+                click.echo(f"  {movement['created_at']}: {Path(movement['from_path']).name} -> {Path(movement['to_path']).name}")
+        
+        # Show associated files
+        associated = database.get_associated_files(file_id)
+        if associated:
+            click.echo(f"\nAssociated Files ({len(associated)}):")
+            for assoc in associated:
+                click.echo(f"  - {assoc['filename']}")
+        
+        click.echo("=" * 60)
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
 
 
 if __name__ == '__main__':

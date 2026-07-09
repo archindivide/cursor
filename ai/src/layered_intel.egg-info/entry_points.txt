@@ -1,0 +1,2 @@
+[console_scripts]
+layered-chat = layered_intel.cli:main

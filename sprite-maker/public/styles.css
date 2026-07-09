@@ -1,0 +1,151 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, sans-serif;
+  background: #1a1a1a;
+  color: #e0e0e0;
+  min-height: 100vh;
+}
+
+header {
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid #333;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.subtitle {
+  margin: 0.25rem 0 0;
+  font-size: 0.85rem;
+  color: #888;
+}
+
+main {
+  padding: 1rem 1.5rem;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.size-select,
+.tools {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.size-select button,
+.tools button {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.9rem;
+  border: 1px solid #444;
+  border-radius: 6px;
+  background: #2a2a2a;
+  color: #e0e0e0;
+  cursor: pointer;
+}
+
+.size-select button:hover,
+.tools button:hover {
+  background: #363636;
+}
+
+.size-select button.active,
+.tools button.active {
+  background: #4a7dc7;
+  border-color: #5a8dd7;
+}
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.actions button,
+.actions .import-label {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.9rem;
+  border: 1px solid #444;
+  border-radius: 6px;
+  background: #2a2a2a;
+  color: #e0e0e0;
+  cursor: pointer;
+}
+
+.actions button:hover,
+.actions .import-label:hover {
+  background: #363636;
+}
+
+.import-file-input {
+  position: absolute;
+  width: 0.1px;
+  height: 0.1px;
+  opacity: 0;
+  overflow: hidden;
+  z-index: -1;
+}
+
+.editor {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  align-items: flex-start;
+}
+
+.canvas-wrap {
+  flex-shrink: 0;
+  padding: 8px;
+  background: #252525;
+  border-radius: 8px;
+  border: 1px solid #333;
+}
+
+#canvas {
+  display: block;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.palette-wrap {
+  flex: 1;
+  min-width: 200px;
+}
+
+.palette {
+  gap: 2px;
+  max-width: 100%;
+}
+
+.palette-swatch {
+  aspect-ratio: 1;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  min-width: 14px;
+  min-height: 14px;
+}
+
+.palette-swatch:hover {
+  border-color: #666;
+}
+
+.palette-swatch.selected {
+  border-color: #fff;
+  box-shadow: 0 0 0 1px #1a1a1a;
+}

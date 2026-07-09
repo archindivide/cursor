@@ -1,0 +1,73 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:FileManager.App.ViewModels"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        d:DesignWidth="960"
+        d:DesignHeight="600"
+        x:Class="FileManager.App.Views.MainWindow"
+        x:Name="RootWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Icon="/Assets/avalonia-logo.ico"
+        Title="File Manager">
+
+    <DockPanel Margin="18" LastChildFill="True">
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+            <Button x:Name="AddFolderButton"
+                    Width="120"
+                    Content="Add Folder"
+                    Click="OnAddFolderClicked" />
+            <Button Width="100"
+                    Content="Refresh"
+                    Command="{Binding RefreshCommand}"
+                    IsEnabled="{Binding IsIdle}" />
+            <TextBlock Text="{Binding StatusMessage}"
+                       Margin="16,0,0,0"
+                       VerticalAlignment="Center"
+                       TextTrimming="CharacterEllipsis" />
+        </StackPanel>
+
+        <Border BorderThickness="1" BorderBrush="{DynamicResource ThemeBorderLowBrush}" CornerRadius="6" Margin="0,12,0,0" Padding="8">
+            <ScrollViewer>
+                <ItemsControl ItemsSource="{Binding Folders}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:ManagedFolderItemViewModel">
+                            <Border Margin="8" Padding="12" CornerRadius="4"
+                                    Background="{DynamicResource ThemeBackgroundLowBrush}">
+                                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="12">
+                                    <TextBlock Grid.Column="0"
+                                               Grid.Row="0"
+                                               Text="{Binding DisplayLabel}"
+                                               FontWeight="SemiBold"
+                                               FontSize="16" />
+
+                                    <TextBlock Grid.Column="0"
+                                               Grid.Row="1"
+                                               Text="{Binding FolderPath}"
+                                               Classes="PathText"
+                                               FontFamily="Consolas,Menlo,monospace"
+                                               Foreground="{DynamicResource ThemeForegroundLowBrush}" />
+
+                                    <TextBlock Grid.Column="0"
+                                               Grid.Row="2"
+                                               Text="{Binding LastScanDisplay}"
+                                               Foreground="{DynamicResource ThemeForegroundLowBrush}" />
+
+                                    <Button Grid.Column="1"
+                                            Grid.Row="0"
+                                            Grid.RowSpan="3"
+                                            Content="Remove"
+                                            Command="{Binding DataContext.RemoveFolderCommand, ElementName=RootWindow}"
+                                            CommandParameter="{Binding}"
+                                            HorizontalAlignment="Right"
+                                            VerticalAlignment="Center" />
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Border>
+    </DockPanel>
+</Window>

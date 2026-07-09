@@ -1,0 +1,5 @@
+#build artifacts
+obj/
+bin/
+__pycache__/
+artifacts/

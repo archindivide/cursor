@@ -9,21 +9,24 @@ from typing import Dict, List, Tuple, Optional
 from datetime import datetime
 
 from ..utils.file_utils import clean_filename, get_file_extension, get_file_mtime, get_file_size, move_file_cross_device
+from ..database import MediaDatabase
 
 
 class FileOrganizer:
     """Organize and standardize file names and directory structure."""
     
-    def __init__(self, config, logger=None):
+    def __init__(self, config, logger=None, database: MediaDatabase = None):
         """
         Initialize file organizer.
         
         Args:
             config: Configuration object
             logger: Logger instance
+            database: Optional database instance for tracking files
         """
         self.config = config
         self.logger = logger or logging.getLogger(__name__)
+        self.database = database
         
     def sanitize_filename(self, filename: str) -> str:
         """
@@ -437,6 +440,54 @@ class FileOrganizer:
         pattern_info = self.extract_pattern_info(file_path.name)
         new_name = self.generate_new_filename(file_path, pattern_info, media_type)
         
+        # Update database if available
+        if self.database:
+            try:
+                # Get or add directory for input directory
+                input_dir_path = file_path.parent
+                input_dir_id = self.database.get_directory(path=str(input_dir_path))
+                if not input_dir_id:
+                    input_dir_id = self.database.add_directory(
+                        str(input_dir_path),
+                        'input',
+                        media_type=media_type
+                    )
+                else:
+                    input_dir_id = input_dir_id['id']
+                
+                # Get output directory if known
+                output_dirs = self.config.get('organization.output_directories', {})
+                output_dir = output_dirs.get(media_type, '') or self.config.get('organization.output_directory', 'organized_media')
+                output_dir_path = Path(output_dir)
+                output_dir_id = self.database.get_directory(path=str(output_dir_path))
+                if not output_dir_id:
+                    output_dir_id = self.database.add_directory(
+                        str(output_dir_path),
+                        'output',
+                        media_type=media_type
+                    )
+                else:
+                    output_dir_id = output_dir_id['id']
+                
+                # Track file in database with pattern info
+                file_id = self.database.add_file(
+                    file_path,
+                    media_type=media_type,
+                    is_recognized=is_recognized,
+                    directory_id=input_dir_id,
+                    title=pattern_info.get('title'),
+                    year=int(pattern_info.get('year')) if pattern_info.get('year') else None,
+                    season=int(pattern_info.get('season')) if pattern_info.get('season') else None,
+                    episode=int(pattern_info.get('episode')) if pattern_info.get('episode') else None,
+                    quality=pattern_info.get('quality'),
+                    codec=pattern_info.get('codec')
+                )
+            except Exception as e:
+                self.logger.debug(f"Error tracking file in database: {e}")
+                file_id = None
+        else:
+            file_id = None
+        
         # Determine target base directory
         if target_base_dir is None:
             # Check for category-specific output directory
@@ -557,7 +608,9 @@ class FileOrganizer:
             'changed': str(file_path) != str(new_path),
             'media_type': media_type,
             'is_recognized': is_recognized,
-            'target_dir': target_dir
+            'target_dir': target_dir,
+            'file_id': file_id if self.database else None,
+            'pattern_info': pattern_info
         }
     
     def _preserve_unorganized_structure(self, file_path: Path, base_path: Path, media_type: str) -> Path:
@@ -1554,10 +1607,45 @@ class FileOrganizer:
                             'from': move_plan['from'],
                             'to': move_plan['to']
                         })
+                    
+                    # Update database if available
+                    if self.database and move_plan.get('file_id'):
+                        try:
+                            # Update output directory if needed
+                            output_dir_path = move_plan['to'].parent
+                            output_dir = self.database.get_directory(path=str(output_dir_path))
+                            if not output_dir:
+                                media_type = move_plan.get('media_type')
+                                output_dir_id = self.database.add_directory(
+                                    str(output_dir_path),
+                                    'output',
+                                    media_type=media_type
+                                )
+                            else:
+                                output_dir_id = output_dir['id']
+                            
+                            # Update file location in database
+                            self.database.move_file(
+                                move_plan['file_id'],
+                                move_plan['to'],
+                                'organize'
+                            )
+                            
+                            # Update directory association
+                            cursor = self.database.conn.cursor()
+                            cursor.execute("""
+                                UPDATE files 
+                                SET directory_id = ?, updated_at = CURRENT_TIMESTAMP
+                                WHERE id = ?
+                            """, (output_dir_id, move_plan['file_id']))
+                            self.database.conn.commit()
+                        except Exception as e:
+                            self.logger.debug(f"Error updating database after move: {e}")
                 else:
                     raise Exception(f"Failed to move file: {move_plan['from']}")
             
             # Move associated files
+            associated_file_ids = []
             for assoc in move_plan['associated']:
                 if move_file_cross_device(assoc['from'], assoc['to']):
                     self.logger.info(f"Moved associated: {assoc['from']} -> {assoc['to']}")
@@ -1568,8 +1656,35 @@ class FileOrganizer:
                             'from': assoc['from'],
                             'to': assoc['to']
                         })
+                    
+                    # Track associated file in database if available
+                    if self.database:
+                        try:
+                            # Check if file already exists
+                            existing_file = self.database.get_file(file_path=assoc['from'])
+                            if existing_file:
+                                # Update existing file location
+                                self.database.move_file(existing_file['id'], assoc['to'], 'organize')
+                                assoc_file_id = existing_file['id']
+                            else:
+                                # Add new file (don't compute hash to speed up)
+                                assoc_file_id = self.database.add_file(assoc['to'], compute_hash=False)
+                            associated_file_ids.append(assoc_file_id)
+                        except Exception as e:
+                            self.logger.debug(f"Error tracking associated file in database: {e}")
                 else:
                     raise Exception(f"Failed to move associated file: {assoc['from']}")
+            
+            # Link associated files to main file in database
+            if self.database and move_plan.get('file_id') and associated_file_ids:
+                try:
+                    self.database.add_associated_files(
+                        move_plan['file_id'],
+                        associated_file_ids,
+                        'related'
+                    )
+                except Exception as e:
+                    self.logger.debug(f"Error linking associated files in database: {e}")
             
             # Save original structure mapping for unorganized files
             if file_mappings and not move_plan.get('is_recognized', True):
